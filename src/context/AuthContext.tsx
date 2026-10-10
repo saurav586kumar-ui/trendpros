@@ -48,16 +48,41 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
         try {
           const docSnap = await getDoc(userDocRef);
           const custId = 'CUST-' + user.uid.slice(-6).toUpperCase();
+          const isUserAdmin = Boolean(user.email && user.email.toLowerCase() === OWNER_EMAIL.toLowerCase());
+          if (isUserAdmin) {
+            try {
+              await setDoc(
+                doc(db, 'admins', user.uid),
+                {
+                  uid: user.uid,
+                  email: user.email,
+                  role: 'admin',
+                  updatedAt: new Date().toISOString(),
+                },
+                { merge: true }
+              );
+            } catch (e) {
+              console.warn('Admin doc sync notice:', e);
+            }
+          }
+
           if (docSnap.exists()) {
             const data = docSnap.data() as UserProfile;
+            const updates: Partial<UserProfile> = {};
             if (!data.customerId) {
               data.customerId = custId;
-              await updateDoc(userDocRef, { customerId: custId });
+              updates.customerId = custId;
+            }
+            if (isUserAdmin && data.role !== 'admin') {
+              data.role = 'admin';
+              updates.role = 'admin';
+            }
+            if (Object.keys(updates).length > 0) {
+              await updateDoc(userDocRef, updates);
             }
             setUserProfile(data);
           } else {
             // New user registration in Firestore
-            const isUserAdmin = user.email?.toLowerCase() === OWNER_EMAIL.toLowerCase();
             const newProfile: UserProfile = {
               id: user.uid,
               customerId: custId,

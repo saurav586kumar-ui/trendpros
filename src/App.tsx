@@ -104,7 +104,13 @@ export function AppContent() {
       case 'compare':
         return <ComparePage onNavigate={navigate} />;
       case 'support':
-        return <SupportChatPage onNavigate={navigate} />;
+        return (
+          <SupportChatPage
+            onNavigate={navigate}
+            orderIdParam={routeParams.orderId || routeParams.id}
+            customerUserIdParam={routeParams.userId || routeParams.customerId}
+          />
+        );
       case 'notifications':
         return <NotificationsPage onNavigate={navigate} />;
       case 'admin':

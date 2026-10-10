@@ -27,11 +27,13 @@ import {
   Layers,
   FolderPlus,
   MapPin,
-  X
+  X,
+  MessageSquare,
+  Loader2
 } from 'lucide-react';
 import { useAuth, OWNER_EMAIL } from '../context/AuthContext';
 import { useStore } from '../context/StoreContext';
-import { Product, OrderStatus, Banner, Voucher, StoreAnnouncementConfig, Category } from '../types';
+import { Product, OrderStatus, Banner, Voucher, StoreAnnouncementConfig, Category, Order } from '../types';
 
 interface AdminDashboardProps {
   onNavigate: (route: string, params?: Record<string, any>) => void;
@@ -363,6 +365,66 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({ onNavigate }) =>
     }
   };
 
+  // Cancellation and Return Action Modals
+  const [cancelActionModal, setCancelActionModal] = useState<{
+    order: Order;
+    action: 'approve' | 'reject';
+  } | null>(null);
+
+  const [returnActionModal, setReturnActionModal] = useState<{
+    order: Order;
+    action: 'approve' | 'reject';
+  } | null>(null);
+
+  const [actionNote, setActionNote] = useState<string>('');
+  const [isProcessingAction, setIsProcessingAction] = useState(false);
+
+  const executeCancelAction = async () => {
+    if (!cancelActionModal || isProcessingAction) return;
+    setIsProcessingAction(true);
+    const { order, action } = cancelActionModal;
+    const isApprove = action === 'approve';
+
+    try {
+      await handleCancelRequest(order.id, isApprove, actionNote.trim() || undefined);
+      setDashboardSuccessMsg(
+        isApprove
+          ? `Order #${order.id} cancellation approved & processed. Inventory restored!`
+          : `Order #${order.id} cancellation request was rejected.`
+      );
+      setCancelActionModal(null);
+      setActionNote('');
+      setTimeout(() => setDashboardSuccessMsg(''), 5000);
+    } catch (err: any) {
+      alert(err.message || 'Error processing cancellation request');
+    } finally {
+      setIsProcessingAction(false);
+    }
+  };
+
+  const executeReturnAction = async () => {
+    if (!returnActionModal || isProcessingAction) return;
+    setIsProcessingAction(true);
+    const { order, action } = returnActionModal;
+    const isApprove = action === 'approve';
+
+    try {
+      await handleReturnRequest(order.id, isApprove, actionNote.trim() || undefined);
+      setDashboardSuccessMsg(
+        isApprove
+          ? `Order #${order.id} return approved & refund processed to customer wallet!`
+          : `Order #${order.id} return request was rejected.`
+      );
+      setReturnActionModal(null);
+      setActionNote('');
+      setTimeout(() => setDashboardSuccessMsg(''), 5000);
+    } catch (err: any) {
+      alert(err.message || 'Error processing return request');
+    } finally {
+      setIsProcessingAction(false);
+    }
+  };
+
   // Metrics
   const totalRevenue = orders
     .filter((o) => o.paymentStatus === 'paid' && o.orderStatus !== 'cancelled')
@@ -374,6 +436,10 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({ onNavigate }) =>
   const filteredOrders =
     selectedStatusCol === 'all'
       ? orders
+      : selectedStatusCol === 'pending_cancels'
+      ? orders.filter((o) => o.cancelRequest?.status === 'pending')
+      : selectedStatusCol === 'pending_returns'
+      ? orders.filter((o) => o.returnRequest?.status === 'pending')
       : orders.filter((o) => {
           if (selectedStatusCol === 'ordered' && o.orderStatus === 'placed') return true;
           if (selectedStatusCol === 'packed' && o.orderStatus === 'processing') return true;
@@ -548,7 +614,7 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({ onNavigate }) =>
           <div className="flex gap-2 overflow-x-auto pb-2">
             <button
               onClick={() => setSelectedStatusCol('all')}
-              className={`px-3 py-1.5 rounded-xl text-xs font-bold transition-all whitespace-nowrap ${
+              className={`px-3 py-1.5 rounded-xl text-xs font-bold transition-all whitespace-nowrap cursor-pointer ${
                 selectedStatusCol === 'all'
                   ? 'bg-slate-900 text-white shadow-xs'
                   : 'bg-white border border-slate-200 text-slate-600'
@@ -556,6 +622,35 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({ onNavigate }) =>
             >
               All Columns ({orders.length})
             </button>
+
+            {pendingCancels.length > 0 && (
+              <button
+                onClick={() => setSelectedStatusCol('pending_cancels')}
+                className={`px-3 py-1.5 rounded-xl text-xs font-bold transition-all whitespace-nowrap flex items-center gap-1.5 border cursor-pointer ${
+                  selectedStatusCol === 'pending_cancels'
+                    ? 'bg-rose-600 text-white border-rose-600 shadow-xs'
+                    : 'bg-rose-50 border-rose-300 text-rose-800 hover:bg-rose-100'
+                }`}
+              >
+                <AlertTriangle className="w-3.5 h-3.5 text-rose-600" />
+                <span>Pending Cancellations ({pendingCancels.length})</span>
+              </button>
+            )}
+
+            {pendingReturns.length > 0 && (
+              <button
+                onClick={() => setSelectedStatusCol('pending_returns')}
+                className={`px-3 py-1.5 rounded-xl text-xs font-bold transition-all whitespace-nowrap flex items-center gap-1.5 border cursor-pointer ${
+                  selectedStatusCol === 'pending_returns'
+                    ? 'bg-amber-600 text-white border-amber-600 shadow-xs'
+                    : 'bg-amber-50 border-amber-300 text-amber-800 hover:bg-amber-100'
+                }`}
+              >
+                <RotateCcw className="w-3.5 h-3.5 text-amber-600" />
+                <span>Pending Returns ({pendingReturns.length})</span>
+              </button>
+            )}
+
             {ORDER_COLUMNS.map((col) => {
               const count = orders.filter((o) => {
                 if (col.status === 'ordered' && o.orderStatus === 'placed') return true;
@@ -567,7 +662,7 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({ onNavigate }) =>
                 <button
                   key={col.status}
                   onClick={() => setSelectedStatusCol(col.status)}
-                  className={`px-3 py-1.5 rounded-xl text-xs font-bold transition-all whitespace-nowrap flex items-center gap-1.5 border ${
+                  className={`px-3 py-1.5 rounded-xl text-xs font-bold transition-all whitespace-nowrap flex items-center gap-1.5 border cursor-pointer ${
                     selectedStatusCol === col.status
                       ? 'bg-indigo-600 text-white border-indigo-600 shadow-xs'
                       : 'bg-white border-slate-200 text-slate-700 hover:border-slate-300'
@@ -597,13 +692,36 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({ onNavigate }) =>
                         <span className="bg-slate-100 text-slate-600 px-2 py-0.5 rounded text-[10px] font-mono font-bold">
                           {o.customerId}
                         </span>
+                        <span
+                          className={`px-2 py-0.5 rounded-full text-[10px] font-bold uppercase ${
+                            o.orderStatus === 'delivered'
+                              ? 'bg-emerald-100 text-emerald-800'
+                              : o.orderStatus === 'cancelled'
+                              ? 'bg-rose-100 text-rose-800'
+                              : o.orderStatus === 'returned'
+                              ? 'bg-slate-200 text-slate-800'
+                              : 'bg-indigo-100 text-indigo-800'
+                          }`}
+                        >
+                          {o.orderStatus}
+                        </span>
                       </div>
                       <p className="text-[11px] text-slate-400 mt-0.5">
                         {o.customerName} &lt;{o.customerEmail}&gt; • {new Date(o.createdAt).toLocaleString()}
                       </p>
                     </div>
 
-                    <div className="flex items-center gap-2">
+                    <div className="flex flex-wrap items-center gap-2">
+                      {/* Direct Customer Support Chat Button */}
+                      <button
+                        onClick={() => onNavigate('support', { orderId: o.id, userId: o.userId })}
+                        className="flex items-center gap-1.5 px-3 py-1.5 bg-indigo-50 hover:bg-indigo-100 text-indigo-700 font-bold rounded-xl border border-indigo-200 transition-colors cursor-pointer"
+                        title="Chat directly with customer regarding this order"
+                      >
+                        <MessageSquare className="w-3.5 h-3.5 text-indigo-600" />
+                        <span>Chat with Customer</span>
+                      </button>
+
                       <button
                         onClick={() => {
                           setPackingSlipStatus(o.id);
@@ -637,34 +755,38 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({ onNavigate }) =>
 
                   {/* Customer Cancellation Request Pending */}
                   {o.cancelRequest && o.cancelRequest.status === 'pending' && (
-                    <div className="bg-rose-50 border border-rose-200 p-4 rounded-xl flex flex-col sm:flex-row sm:items-center justify-between gap-3">
-                      <div>
-                        <p className="font-bold text-rose-900 flex items-center gap-1.5">
+                    <div className="bg-rose-50 border border-rose-300 p-4 rounded-xl flex flex-col sm:flex-row sm:items-center justify-between gap-4 shadow-xs">
+                      <div className="space-y-1">
+                        <p className="font-black text-rose-950 flex items-center gap-1.5 text-xs">
                           <AlertTriangle className="w-4 h-4 text-rose-600" />
-                          Customer Cancellation Request Pending
+                          <span>Customer Cancellation Request Pending Review</span>
                         </p>
-                        <p className="text-rose-700 mt-0.5">Reason: &ldquo;{o.cancelRequest.reason}&rdquo;</p>
+                        <p className="text-rose-800 text-xs">
+                          <strong>Customer Reason:</strong> &ldquo;{o.cancelRequest.reason}&rdquo;
+                        </p>
+                        <p className="text-[11px] text-rose-600">
+                          Requested on {new Date(o.cancelRequest.requestDate).toLocaleString()} • Payment Method: {o.paymentMethod.toUpperCase()} ({o.paymentStatus})
+                        </p>
                       </div>
 
-                      <div className="flex items-center gap-2">
+                      <div className="flex items-center gap-2 shrink-0">
                         <button
                           onClick={() => {
-                            const note = prompt('Enter rejection reason note for customer:');
-                            if (note !== null) handleCancelRequest(o.id, false, note);
+                            setActionNote('Cancellation request cannot be accepted as order has already been processed.');
+                            setCancelActionModal({ order: o, action: 'reject' });
                           }}
-                          className="px-3 py-1.5 bg-white border border-rose-300 text-rose-700 font-bold rounded-xl hover:bg-rose-100"
+                          className="px-3.5 py-2 bg-white border border-rose-300 text-rose-700 font-bold rounded-xl hover:bg-rose-100 transition-colors cursor-pointer text-xs"
                         >
                           Reject
                         </button>
                         <button
                           onClick={() => {
-                            if (confirm(`Approve cancellation and refund ₹${o.pricing.total} to customer's wallet?`)) {
-                              handleCancelRequest(o.id, true, 'Approved by store owner');
-                            }
+                            setActionNote('Approved by store owner');
+                            setCancelActionModal({ order: o, action: 'approve' });
                           }}
-                          className="px-3.5 py-1.5 bg-rose-600 text-white font-bold rounded-xl hover:bg-rose-700 shadow-xs"
+                          className="px-4 py-2 bg-rose-600 text-white font-bold rounded-xl hover:bg-rose-700 shadow-xs transition-colors cursor-pointer text-xs flex items-center gap-1.5 active:scale-95"
                         >
-                          Accept & Refund ₹{o.pricing.total}
+                          <span>Accept & Refund ₹{o.pricing.total.toLocaleString()}</span>
                         </button>
                       </div>
                     </div>
@@ -672,13 +794,18 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({ onNavigate }) =>
 
                   {/* Customer Return Request Pending */}
                   {o.returnRequest && o.returnRequest.status === 'pending' && (
-                    <div className="bg-amber-50 border border-amber-300 p-4 rounded-xl flex flex-col sm:flex-row sm:items-center justify-between gap-3">
-                      <div>
-                        <p className="font-bold text-amber-900 flex items-center gap-1.5">
+                    <div className="bg-amber-50 border border-amber-300 p-4 rounded-xl flex flex-col sm:flex-row sm:items-center justify-between gap-4 shadow-xs">
+                      <div className="space-y-1">
+                        <p className="font-black text-amber-950 flex items-center gap-1.5 text-xs">
                           <RotateCcw className="w-4 h-4 text-amber-600" />
-                          Customer Return & Refund Request Pending
+                          <span>Customer Return & Refund Request Pending Review</span>
                         </p>
-                        <p className="text-amber-800 mt-0.5">Reason: &ldquo;{o.returnRequest.reason}&rdquo;</p>
+                        <p className="text-amber-800 text-xs">
+                          <strong>Customer Reason:</strong> &ldquo;{o.returnRequest.reason}&rdquo;
+                        </p>
+                        <p className="text-[11px] text-amber-700">
+                          Requested on {new Date(o.returnRequest.requestDate).toLocaleString()}
+                        </p>
                         {o.returnRequest.extraImages && o.returnRequest.extraImages.length > 0 && (
                           <div className="flex gap-2 mt-2">
                             {o.returnRequest.extraImages.map((img, i) => (
@@ -693,25 +820,24 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({ onNavigate }) =>
                         )}
                       </div>
 
-                      <div className="flex items-center gap-2">
+                      <div className="flex items-center gap-2 shrink-0">
                         <button
                           onClick={() => {
-                            const note = prompt('Enter rejection reason note for customer:');
-                            if (note !== null) handleReturnRequest(o.id, false, note);
+                            setActionNote('Return request rejected: Does not meet return policy condition.');
+                            setReturnActionModal({ order: o, action: 'reject' });
                           }}
-                          className="px-3 py-1.5 bg-white border border-amber-300 text-amber-800 font-bold rounded-xl hover:bg-amber-100"
+                          className="px-3.5 py-2 bg-white border border-amber-300 text-amber-800 font-bold rounded-xl hover:bg-amber-100 transition-colors cursor-pointer text-xs"
                         >
                           Reject
                         </button>
                         <button
                           onClick={() => {
-                            if (confirm(`Approve return and refund ₹${o.pricing.total} to customer's wallet?`)) {
-                              handleReturnRequest(o.id, true, 'Return accepted by store owner');
-                            }
+                            setActionNote('Return accepted by store owner. Refund credited to wallet.');
+                            setReturnActionModal({ order: o, action: 'approve' });
                           }}
-                          className="px-3.5 py-1.5 bg-amber-600 text-white font-bold rounded-xl hover:bg-amber-700 shadow-xs"
+                          className="px-4 py-2 bg-amber-600 text-white font-bold rounded-xl hover:bg-amber-700 shadow-xs transition-colors cursor-pointer text-xs flex items-center gap-1.5 active:scale-95"
                         >
-                          Accept & Refund ₹{o.pricing.total}
+                          <span>Accept & Refund ₹{o.pricing.total.toLocaleString()}</span>
                         </button>
                       </div>
                     </div>
@@ -1742,6 +1868,284 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({ onNavigate }) =>
                   </div>
                 ));
               })()}
+            </div>
+          </div>
+        </div>
+      )}
+      {/* Cancellation Action Modal */}
+      {cancelActionModal && (
+        <div className="fixed inset-0 z-50 bg-black/60 backdrop-blur-xs flex items-center justify-center p-4 animate-in fade-in duration-150">
+          <div className="bg-white rounded-3xl max-w-lg w-full p-6 shadow-2xl border border-slate-200 space-y-4">
+            <div className="flex items-center justify-between pb-3 border-b border-slate-100">
+              <div className="flex items-center gap-2.5">
+                <div
+                  className={`w-10 h-10 rounded-2xl flex items-center justify-center ${
+                    cancelActionModal.action === 'approve'
+                      ? 'bg-emerald-50 text-emerald-600'
+                      : 'bg-rose-50 text-rose-600'
+                  }`}
+                >
+                  <AlertTriangle className="w-5 h-5" />
+                </div>
+                <div>
+                  <h3 className="text-base font-bold text-slate-900">
+                    {cancelActionModal.action === 'approve'
+                      ? 'Approve Order Cancellation'
+                      : 'Reject Cancellation Request'}
+                  </h3>
+                  <p className="text-xs text-slate-500 font-mono">
+                    Order #{cancelActionModal.order.id} • {cancelActionModal.order.customerName}
+                  </p>
+                </div>
+              </div>
+
+              <button
+                onClick={() => setCancelActionModal(null)}
+                className="p-1.5 text-slate-400 hover:text-slate-700 rounded-lg cursor-pointer"
+              >
+                <X className="w-5 h-5" />
+              </button>
+            </div>
+
+            {/* Request Summary */}
+            <div className="bg-slate-50 rounded-2xl p-4 border border-slate-200 space-y-2 text-xs">
+              <div className="flex justify-between">
+                <span className="text-slate-500">Order Amount:</span>
+                <span className="font-black text-slate-900">
+                  ₹{cancelActionModal.order.pricing.total.toLocaleString()} ({cancelActionModal.order.paymentMethod.toUpperCase()})
+                </span>
+              </div>
+              <div className="flex justify-between">
+                <span className="text-slate-500">Payment Status:</span>
+                <span className="font-bold text-indigo-700 capitalize">
+                  {cancelActionModal.order.paymentStatus}
+                </span>
+              </div>
+              <div className="pt-2 border-t border-slate-200">
+                <span className="text-slate-500 block mb-0.5 font-semibold">Customer's Reason:</span>
+                <p className="italic text-slate-800 bg-white p-2.5 rounded-xl border border-slate-200">
+                  &ldquo;{cancelActionModal.order.cancelRequest?.reason}&rdquo;
+                </p>
+              </div>
+            </div>
+
+            {/* Action Notice */}
+            {cancelActionModal.action === 'approve' ? (
+              <div className="p-3 bg-emerald-50 border border-emerald-200 rounded-xl text-emerald-800 text-xs space-y-1">
+                <p className="font-bold">Automated Operations on Approval:</p>
+                <ul className="list-disc list-inside text-[11px] space-y-0.5 text-emerald-700">
+                  <li>Order status updated to &ldquo;Cancelled&rdquo;</li>
+                  <li>Product inventory automatically restored to catalog</li>
+                  <li>
+                    {cancelActionModal.order.paymentMethod === 'cod' && cancelActionModal.order.paymentStatus !== 'paid'
+                      ? 'Unpaid Cash on Delivery: No uncollected funds deducted.'
+                      : `Full payment of ₹${cancelActionModal.order.pricing.total.toLocaleString()} credited to customer wallet`}
+                  </li>
+                  <li>Customer receives real-time notification</li>
+                </ul>
+              </div>
+            ) : (
+              <div className="p-3 bg-rose-50 border border-rose-200 rounded-xl text-rose-800 text-xs">
+                <p className="font-bold">Rejection Notice:</p>
+                <p className="text-[11px] mt-0.5 text-rose-700">
+                  Order status remains &ldquo;{cancelActionModal.order.orderStatus}&rdquo;. The customer will be informed of your decision.
+                </p>
+              </div>
+            )}
+
+            {/* Admin Note Input */}
+            <div>
+              <label className="font-bold text-slate-700 block text-xs mb-1">
+                Message / Explanation to Customer:
+              </label>
+              <textarea
+                value={actionNote}
+                onChange={(e) => setActionNote(e.target.value)}
+                placeholder="Enter note or explanation for the customer..."
+                rows={3}
+                className="w-full bg-slate-50 border border-slate-200 rounded-xl p-3 text-xs outline-hidden focus:border-indigo-500"
+              />
+            </div>
+
+            {/* Modal Buttons */}
+            <div className="flex gap-2 pt-2">
+              <button
+                type="button"
+                onClick={() => setCancelActionModal(null)}
+                className="flex-1 py-2.5 text-xs font-bold text-slate-600 bg-slate-100 hover:bg-slate-200 rounded-xl cursor-pointer"
+                disabled={isProcessingAction}
+              >
+                Cancel
+              </button>
+              <button
+                type="button"
+                onClick={executeCancelAction}
+                disabled={isProcessingAction}
+                className={`flex-1 py-2.5 text-xs font-bold text-white rounded-xl shadow-md transition-all flex items-center justify-center gap-1.5 cursor-pointer active:scale-95 ${
+                  cancelActionModal.action === 'approve'
+                    ? 'bg-emerald-600 hover:bg-emerald-700'
+                    : 'bg-rose-600 hover:bg-rose-700'
+                }`}
+              >
+                {isProcessingAction ? (
+                  <>
+                    <Loader2 className="w-3.5 h-3.5 animate-spin" />
+                    <span>Processing...</span>
+                  </>
+                ) : (
+                  <span>
+                    {cancelActionModal.action === 'approve'
+                      ? 'Confirm & Process Approval'
+                      : 'Confirm Rejection'}
+                  </span>
+                )}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Return Action Modal */}
+      {returnActionModal && (
+        <div className="fixed inset-0 z-50 bg-black/60 backdrop-blur-xs flex items-center justify-center p-4 animate-in fade-in duration-150">
+          <div className="bg-white rounded-3xl max-w-lg w-full p-6 shadow-2xl border border-slate-200 space-y-4">
+            <div className="flex items-center justify-between pb-3 border-b border-slate-100">
+              <div className="flex items-center gap-2.5">
+                <div
+                  className={`w-10 h-10 rounded-2xl flex items-center justify-center ${
+                    returnActionModal.action === 'approve'
+                      ? 'bg-amber-50 text-amber-600'
+                      : 'bg-rose-50 text-rose-600'
+                  }`}
+                >
+                  <RotateCcw className="w-5 h-5" />
+                </div>
+                <div>
+                  <h3 className="text-base font-bold text-slate-900">
+                    {returnActionModal.action === 'approve'
+                      ? 'Approve Return & Refund'
+                      : 'Reject Return Request'}
+                  </h3>
+                  <p className="text-xs text-slate-500 font-mono">
+                    Order #{returnActionModal.order.id} • {returnActionModal.order.customerName}
+                  </p>
+                </div>
+              </div>
+
+              <button
+                onClick={() => setReturnActionModal(null)}
+                className="p-1.5 text-slate-400 hover:text-slate-700 rounded-lg cursor-pointer"
+              >
+                <X className="w-5 h-5" />
+              </button>
+            </div>
+
+            {/* Request Summary */}
+            <div className="bg-slate-50 rounded-2xl p-4 border border-slate-200 space-y-2 text-xs">
+              <div className="flex justify-between">
+                <span className="text-slate-500">Order Total:</span>
+                <span className="font-black text-slate-900">
+                  ₹{returnActionModal.order.pricing.total.toLocaleString()}
+                </span>
+              </div>
+              <div className="pt-2 border-t border-slate-200">
+                <span className="text-slate-500 block mb-0.5 font-semibold">Customer's Return Reason:</span>
+                <p className="italic text-slate-800 bg-white p-2.5 rounded-xl border border-slate-200">
+                  &ldquo;{returnActionModal.order.returnRequest?.reason}&rdquo;
+                </p>
+              </div>
+
+              {/* Customer Attached Photos */}
+              {returnActionModal.order.returnRequest?.extraImages &&
+                returnActionModal.order.returnRequest.extraImages.length > 0 && (
+                  <div className="pt-2 border-t border-slate-200">
+                    <span className="text-slate-500 block mb-1 font-semibold">Inspection Photos:</span>
+                    <div className="flex gap-2 overflow-x-auto pb-1">
+                      {returnActionModal.order.returnRequest.extraImages.map((img, i) => (
+                        <a
+                          key={i}
+                          href={img}
+                          target="_blank"
+                          rel="noreferrer"
+                          className="w-14 h-14 rounded-lg overflow-hidden border border-slate-300 block shrink-0 hover:opacity-90"
+                        >
+                          <img src={img} alt="Defect" className="w-full h-full object-cover" />
+                        </a>
+                      ))}
+                    </div>
+                  </div>
+                )}
+            </div>
+
+            {/* Action Notice */}
+            {returnActionModal.action === 'approve' ? (
+              <div className="p-3 bg-amber-50 border border-amber-200 rounded-xl text-amber-900 text-xs space-y-1">
+                <p className="font-bold">Operations on Return Approval:</p>
+                <ul className="list-disc list-inside text-[11px] space-y-0.5 text-amber-800">
+                  <li>Order status updated to &ldquo;Returned&rdquo;</li>
+                  <li>Stock restored for delivered items</li>
+                  <li>
+                    ₹{returnActionModal.order.pricing.total.toLocaleString()} credited to customer wallet
+                  </li>
+                  <li>Customer notified via in-app notification</li>
+                </ul>
+              </div>
+            ) : (
+              <div className="p-3 bg-rose-50 border border-rose-200 rounded-xl text-rose-800 text-xs">
+                <p className="font-bold">Rejection Notice:</p>
+                <p className="text-[11px] mt-0.5 text-rose-700">
+                  Order status remains &ldquo;Delivered&rdquo;. The customer will receive your rejection note.
+                </p>
+              </div>
+            )}
+
+            {/* Admin Note Input */}
+            <div>
+              <label className="font-bold text-slate-700 block text-xs mb-1">
+                Note for Customer:
+              </label>
+              <textarea
+                value={actionNote}
+                onChange={(e) => setActionNote(e.target.value)}
+                placeholder="Enter note or return instructions..."
+                rows={3}
+                className="w-full bg-slate-50 border border-slate-200 rounded-xl p-3 text-xs outline-hidden focus:border-indigo-500"
+              />
+            </div>
+
+            {/* Modal Buttons */}
+            <div className="flex gap-2 pt-2">
+              <button
+                type="button"
+                onClick={() => setReturnActionModal(null)}
+                className="flex-1 py-2.5 text-xs font-bold text-slate-600 bg-slate-100 hover:bg-slate-200 rounded-xl cursor-pointer"
+                disabled={isProcessingAction}
+              >
+                Cancel
+              </button>
+              <button
+                type="button"
+                onClick={executeReturnAction}
+                disabled={isProcessingAction}
+                className={`flex-1 py-2.5 text-xs font-bold text-white rounded-xl shadow-md transition-all flex items-center justify-center gap-1.5 cursor-pointer active:scale-95 ${
+                  returnActionModal.action === 'approve'
+                    ? 'bg-amber-600 hover:bg-amber-700'
+                    : 'bg-rose-600 hover:bg-rose-700'
+                }`}
+              >
+                {isProcessingAction ? (
+                  <>
+                    <Loader2 className="w-3.5 h-3.5 animate-spin" />
+                    <span>Processing...</span>
+                  </>
+                ) : (
+                  <span>
+                    {returnActionModal.action === 'approve'
+                      ? 'Confirm Return & Refund'
+                      : 'Confirm Rejection'}
+                  </span>
+                )}
+              </button>
             </div>
           </div>
         </div>

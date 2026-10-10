@@ -30,7 +30,7 @@ import {
   OrderStatus,
   StoreConfig
 } from '../types';
-import { useAuth } from './AuthContext';
+import { useAuth, OWNER_EMAIL } from './AuthContext';
 import {
   SAMPLE_PRODUCTS,
   SAMPLE_CATEGORIES,
@@ -84,8 +84,9 @@ interface StoreContextType {
   deleteBanner: (id: string) => Promise<void>;
   addReview: (productId: string, rating: number, title?: string, comment?: string, images?: string[]) => Promise<void>;
   getProductReviews: (productId: string) => Promise<Review[]>;
-  sendSupportMessage: (message: string, orderId?: string) => Promise<void>;
-  replySupportMessage: (userId: string, reply: string, orderId?: string) => Promise<void>;
+  sendSupportMessage: (message: string, orderId?: string, imageUrl?: string, imageFileName?: string) => Promise<string>;
+  replySupportMessage: (userId: string, reply: string, orderId?: string, imageUrl?: string, imageFileName?: string) => Promise<string>;
+  markChatMessagesAsRead: (chatUserId: string, readerRole: 'customer' | 'owner') => Promise<void>;
   creditCustomerWalletFromChat: (targetUserId: string, amount: number, reason: string) => Promise<void>;
   redeemGiftCard: (cardNumber: string, pin: string) => Promise<{ success: boolean; amount: number; message: string }>;
   markNotificationAsRead: (notificationId: string) => Promise<void>;
@@ -273,12 +274,11 @@ export const StoreProvider: React.FC<{ children: React.ReactNode }> = ({ childre
     // Support messages
     let supportQuery;
     if (isAdmin) {
-      supportQuery = query(collection(db, 'supportMessages'), orderBy('createdAt', 'asc'));
+      supportQuery = query(collection(db, 'supportMessages'));
     } else {
       supportQuery = query(
         collection(db, 'supportMessages'),
-        where('userId', '==', currentUser.uid),
-        orderBy('createdAt', 'asc')
+        where('userId', '==', currentUser.uid)
       );
     }
 
@@ -289,6 +289,7 @@ export const StoreProvider: React.FC<{ children: React.ReactNode }> = ({ childre
           id: d.id,
           ...d.data(),
         })) as SupportMessage[];
+        msgs.sort((a, b) => new Date(a.createdAt).getTime() - new Date(b.createdAt).getTime());
         setSupportMessages(msgs);
       },
       (error) => {
@@ -593,29 +594,43 @@ export const StoreProvider: React.FC<{ children: React.ReactNode }> = ({ childre
   // Admin approves or rejects Cancellation Request
   const handleCancelRequest = async (orderId: string, approved: boolean, adminNote?: string) => {
     const existing = orders.find((o) => o.id === orderId);
-    if (!existing) return;
+    if (!existing) throw new Error('Order not found');
+    if (existing.cancelRequest?.status !== 'pending') {
+      throw new Error(`This cancellation request has already been ${existing.cancelRequest?.status || 'processed'}.`);
+    }
     const now = new Date().toISOString();
 
     try {
       const orderRef = doc(db, 'orders', orderId);
       if (approved) {
         // Change status to cancelled
-        await updateDoc(orderRef, {
-          orderStatus: 'cancelled',
-          'cancelRequest.status': 'approved',
-          'cancelRequest.adminNote': adminNote || 'Approved by store owner',
-          updatedAt: now,
-          timeline: [
-            ...existing.timeline,
-            {
-              status: 'cancelled',
-              timestamp: now,
-              note: `Cancellation approved by owner. ${adminNote || ''}`,
-            },
-          ],
-        });
+        const isPaid = existing.paymentStatus === 'paid' || existing.paymentMethod === 'wallet';
+        const walletUsed = existing.pricing?.walletUsed || 0;
+        const refundAmount = (existing.paymentMethod === 'cod' && existing.paymentStatus !== 'paid')
+          ? walletUsed
+          : existing.pricing.total;
 
-        // Restore stock
+        await updateDoc(
+          orderRef,
+          sanitizeForFirestore({
+            orderStatus: 'cancelled',
+            paymentStatus: isPaid ? 'refunded' : (existing.paymentMethod === 'cod' ? 'cancelled' : 'refunded'),
+            'cancelRequest.status': 'approved',
+            'cancelRequest.adminNote': adminNote || 'Approved by store owner',
+            'cancelRequest.processedAt': now,
+            updatedAt: now,
+            timeline: [
+              ...existing.timeline,
+              {
+                status: 'cancelled',
+                timestamp: now,
+                note: `Cancellation approved by owner. ${adminNote || ''}`,
+              },
+            ],
+          })
+        );
+
+        // Restore stock once
         for (const item of existing.items) {
           const prodRef = doc(db, 'products', item.productId);
           const prod = products.find((p) => p.id === item.productId);
@@ -624,66 +639,61 @@ export const StoreProvider: React.FC<{ children: React.ReactNode }> = ({ childre
           }
         }
 
-        // Refund to customer wallet
-        const refundAmount = existing.pricing.total;
+        // Refund to customer wallet if applicable
         if (refundAmount > 0) {
           const custUserRef = doc(db, 'users', existing.userId);
           const userSnap = await getDoc(custUserRef);
           const currentBal = userSnap.exists() ? userSnap.data().walletBalance || 0 : 0;
           await updateDoc(custUserRef, { walletBalance: currentBal + refundAmount });
 
-          await addDoc(collection(db, 'walletLedger'), {
-            id: `LED-${Date.now()}`,
-            userId: existing.userId,
-            amount: refundAmount,
-            type: 'credit',
-            reason: `Refund for cancelled order #${orderId}`,
-            orderId,
-            createdAt: now,
-          });
+          await addDoc(
+            collection(db, 'walletLedger'),
+            sanitizeForFirestore({
+              id: `LED-${Date.now()}`,
+              userId: existing.userId,
+              amount: refundAmount,
+              type: 'credit',
+              reason: `Refund for cancelled order #${orderId}`,
+              orderId,
+              createdAt: now,
+            })
+          );
         }
       } else {
         // Rejected
-        await updateDoc(orderRef, {
-          'cancelRequest.status': 'rejected',
-          'cancelRequest.adminNote': adminNote || 'Cancellation request declined by store',
-          updatedAt: now,
-          timeline: [
-            ...existing.timeline,
-            {
-              status: existing.orderStatus,
-              timestamp: now,
-              note: `Cancellation rejected by owner. Reason: ${adminNote || 'Policy'}.`,
-            },
-          ],
-        });
+        await updateDoc(
+          orderRef,
+          sanitizeForFirestore({
+            'cancelRequest.status': 'rejected',
+            'cancelRequest.adminNote': adminNote || 'Cancellation request declined by store',
+            'cancelRequest.processedAt': now,
+            updatedAt: now,
+            timeline: [
+              ...existing.timeline,
+              {
+                status: existing.orderStatus,
+                timestamp: now,
+                note: `Cancellation rejected by owner. Reason: ${adminNote || 'Store Policy'}.`,
+              },
+            ],
+          })
+        );
       }
 
-      await addDoc(collection(db, 'notifications'), {
-        userId: existing.userId,
-        title: approved ? 'Order Cancelled & Refunded' : 'Cancellation Request Rejected',
-        message: approved
-          ? `Your cancellation for #${orderId} was approved. ₹${existing.pricing.total} credited to your wallet.`
-          : `Your cancellation request for #${orderId} was rejected: ${adminNote || ''}`,
-        type: 'order',
-        link: `/orders/${orderId}`,
-        isRead: false,
-        createdAt: now,
-      });
-
-      // Browser Web Notification
-      if (typeof window !== 'undefined' && 'Notification' in window && Notification.permission === 'granted') {
-        try {
-          new Notification(approved ? 'TrendPro: Cancellation Approved' : 'TrendPro: Cancellation Rejected', {
-            body: approved
-              ? `Order #${orderId} cancelled. ₹${existing.pricing.total.toLocaleString()} credited to your wallet!`
-              : `Order #${orderId}: ${adminNote || 'Cancellation request declined by store owner.'}`,
-            icon: '/favicon.ico',
-          });
-        } catch (e) {
-          console.warn('Notification error:', e);
-        }
-      }
+      await addDoc(
+        collection(db, 'notifications'),
+        sanitizeForFirestore({
+          userId: existing.userId,
+          title: approved ? 'Order Cancelled & Refunded' : 'Cancellation Request Rejected',
+          message: approved
+            ? `Your cancellation for #${orderId} was approved. ₹${existing.pricing.total.toLocaleString()} processed for your order.`
+            : `Your cancellation request for #${orderId} was rejected: ${adminNote || ''}`,
+          type: 'order',
+          link: `/orders/${orderId}`,
+          isRead: false,
+          createdAt: now,
+        })
+      );
     } catch (error) {
       handleFirestoreError(error, OperationType.UPDATE, `orders/${orderId}`);
     }
@@ -692,26 +702,35 @@ export const StoreProvider: React.FC<{ children: React.ReactNode }> = ({ childre
   // Admin approves or rejects Return Request
   const handleReturnRequest = async (orderId: string, approved: boolean, adminNote?: string) => {
     const existing = orders.find((o) => o.id === orderId);
-    if (!existing) return;
+    if (!existing) throw new Error('Order not found');
+    if (existing.returnRequest?.status !== 'pending') {
+      throw new Error(`This return request has already been ${existing.returnRequest?.status || 'processed'}.`);
+    }
     const now = new Date().toISOString();
 
     try {
       const orderRef = doc(db, 'orders', orderId);
       if (approved) {
-        await updateDoc(orderRef, {
-          orderStatus: 'returned',
-          'returnRequest.status': 'approved',
-          'returnRequest.adminNote': adminNote || 'Return approved',
-          updatedAt: now,
-          timeline: [
-            ...existing.timeline,
-            {
-              status: 'returned',
-              timestamp: now,
-              note: `Return approved by owner. Refund initiated to wallet. ${adminNote || ''}`,
-            },
-          ],
-        });
+        const refundAmount = existing.pricing.total;
+        await updateDoc(
+          orderRef,
+          sanitizeForFirestore({
+            orderStatus: 'returned',
+            paymentStatus: 'refunded',
+            'returnRequest.status': 'approved',
+            'returnRequest.adminNote': adminNote || 'Return approved',
+            'returnRequest.processedAt': now,
+            updatedAt: now,
+            timeline: [
+              ...existing.timeline,
+              {
+                status: 'returned',
+                timestamp: now,
+                note: `Return approved by owner. Refund initiated to wallet. ${adminNote || ''}`,
+              },
+            ],
+          })
+        );
 
         // Restore stock
         for (const item of existing.items) {
@@ -723,64 +742,59 @@ export const StoreProvider: React.FC<{ children: React.ReactNode }> = ({ childre
         }
 
         // Refund full amount to wallet
-        const refundAmount = existing.pricing.total;
         if (refundAmount > 0) {
           const custUserRef = doc(db, 'users', existing.userId);
           const userSnap = await getDoc(custUserRef);
           const currentBal = userSnap.exists() ? userSnap.data().walletBalance || 0 : 0;
           await updateDoc(custUserRef, { walletBalance: currentBal + refundAmount });
 
-          await addDoc(collection(db, 'walletLedger'), {
-            id: `LED-${Date.now()}`,
-            userId: existing.userId,
-            amount: refundAmount,
-            type: 'credit',
-            reason: `Refund for returned order #${orderId}`,
-            orderId,
-            createdAt: now,
-          });
+          await addDoc(
+            collection(db, 'walletLedger'),
+            sanitizeForFirestore({
+              id: `LED-${Date.now()}`,
+              userId: existing.userId,
+              amount: refundAmount,
+              type: 'credit',
+              reason: `Refund for returned order #${orderId}`,
+              orderId,
+              createdAt: now,
+            })
+          );
         }
       } else {
-        await updateDoc(orderRef, {
-          'returnRequest.status': 'rejected',
-          'returnRequest.adminNote': adminNote || 'Return rejected',
-          updatedAt: now,
-          timeline: [
-            ...existing.timeline,
-            {
-              status: 'delivered',
-              timestamp: now,
-              note: `Return request rejected by owner. Reason: ${adminNote || ''}`,
-            },
-          ],
-        });
+        await updateDoc(
+          orderRef,
+          sanitizeForFirestore({
+            'returnRequest.status': 'rejected',
+            'returnRequest.adminNote': adminNote || 'Return rejected',
+            'returnRequest.processedAt': now,
+            updatedAt: now,
+            timeline: [
+              ...existing.timeline,
+              {
+                status: 'delivered',
+                timestamp: now,
+                note: `Return request rejected by owner. Reason: ${adminNote || ''}`,
+              },
+            ],
+          })
+        );
       }
 
-      await addDoc(collection(db, 'notifications'), {
-        userId: existing.userId,
-        title: approved ? 'Return Approved & Refunded' : 'Return Request Rejected',
-        message: approved
-          ? `Return for #${orderId} was approved! ₹${existing.pricing.total} credited to your TrendPro wallet.`
-          : `Return for #${orderId} was rejected: ${adminNote || ''}`,
-        type: 'order',
-        link: `/orders/${orderId}`,
-        isRead: false,
-        createdAt: now,
-      });
-
-      // Browser Web Notification
-      if (typeof window !== 'undefined' && 'Notification' in window && Notification.permission === 'granted') {
-        try {
-          new Notification(approved ? 'TrendPro: Return Approved' : 'TrendPro: Return Rejected', {
-            body: approved
-              ? `Return for Order #${orderId} approved! ₹${existing.pricing.total.toLocaleString()} added to your wallet.`
-              : `Order #${orderId}: ${adminNote || 'Return request rejected.'}`,
-            icon: '/favicon.ico',
-          });
-        } catch (e) {
-          console.warn('Notification error:', e);
-        }
-      }
+      await addDoc(
+        collection(db, 'notifications'),
+        sanitizeForFirestore({
+          userId: existing.userId,
+          title: approved ? 'Return Approved & Refunded' : 'Return Request Rejected',
+          message: approved
+            ? `Return for #${orderId} was approved! ₹${existing.pricing.total.toLocaleString()} credited to your TrendPro wallet.`
+            : `Return for #${orderId} was rejected: ${adminNote || ''}`,
+          type: 'order',
+          link: `/orders/${orderId}`,
+          isRead: false,
+          createdAt: now,
+        })
+      );
     } catch (error) {
       handleFirestoreError(error, OperationType.UPDATE, `orders/${orderId}`);
     }
@@ -1034,41 +1048,164 @@ export const StoreProvider: React.FC<{ children: React.ReactNode }> = ({ childre
   };
 
   // Support messages (CUSTOMER TO OWNER - NO BOTS)
-  const sendSupportMessage = async (message: string, orderId?: string) => {
+  const sendSupportMessage = async (
+    message: string,
+    orderId?: string,
+    imageUrl?: string,
+    imageFileName?: string
+  ): Promise<string> => {
     if (!currentUser) throw new Error('Sign in to chat with store owner');
     const custId = userProfile?.customerId || `CUST-${currentUser.uid.slice(-6).toUpperCase()}`;
+    const conversationId = `conv_${currentUser.uid}`;
+    const now = new Date().toISOString();
 
-    const newMsg: Omit<SupportMessage, 'id'> = {
+    const newMsg = sanitizeForFirestore({
+      conversationId,
       userId: currentUser.uid,
+      senderId: currentUser.uid,
+      recipientId: OWNER_EMAIL,
+      senderRole: 'customer' as const,
+      sender: 'customer' as const,
+      senderName: currentUser.displayName || 'Customer',
+      senderEmail: currentUser.email || '',
       customerId: custId,
       userName: currentUser.displayName || 'Customer',
       userEmail: currentUser.email || '',
-      message,
-      sender: 'customer',
-      orderId: orderId || undefined,
-      createdAt: new Date().toISOString(),
+      message: message.trim(),
+      imageUrl: imageUrl || null,
+      imageFileName: imageFileName || null,
+      orderId: orderId || null,
+      createdAt: now,
       isRead: false,
-    };
-    await addDoc(collection(db, 'supportMessages'), newMsg);
+    });
+
+    const docRef = await addDoc(collection(db, 'supportMessages'), newMsg);
+
+    // Update conversation metadata
+    try {
+      await setDoc(
+        doc(db, 'supportConversations', conversationId),
+        sanitizeForFirestore({
+          id: conversationId,
+          userId: currentUser.uid,
+          customerId: custId,
+          customerName: currentUser.displayName || 'Customer',
+          customerEmail: currentUser.email || '',
+          lastMessage: message.trim() || (imageUrl ? '📷 [Image Attachment]' : 'Message'),
+          lastMessageAt: now,
+          lastSender: 'customer',
+          orderId: orderId || null,
+          updatedAt: now,
+        }),
+        { merge: true }
+      );
+    } catch (e) {
+      console.warn('Conversation sync notice:', e);
+    }
+
+    return docRef.id;
   };
 
   // OWNER REPLIES TO CUSTOMER DIRECTLY
-  const replySupportMessage = async (targetUserId: string, reply: string, orderId?: string) => {
-    if (!isAdmin) throw new Error('Unauthorized');
+  const replySupportMessage = async (
+    targetUserId: string,
+    reply: string,
+    orderId?: string,
+    imageUrl?: string,
+    imageFileName?: string
+  ): Promise<string> => {
+    if (!isAdmin) throw new Error('Unauthorized: Only store owner can send replies');
     const custId = `CUST-${targetUserId.slice(-6).toUpperCase()}`;
+    const conversationId = `conv_${targetUserId}`;
+    const now = new Date().toISOString();
 
-    const newMsg: Omit<SupportMessage, 'id'> = {
+    const prevCustMsg = supportMessages.find((m) => m.userId === targetUserId && m.sender === 'customer');
+    const relatedOrder = orders.find((o) => o.userId === targetUserId);
+    const customerName = prevCustMsg?.userName || relatedOrder?.customerName || 'Customer';
+    const customerEmail = prevCustMsg?.userEmail || relatedOrder?.customerEmail || '';
+
+    const newMsg = sanitizeForFirestore({
+      conversationId,
       userId: targetUserId,
+      senderId: currentUser?.uid || 'admin',
+      recipientId: targetUserId,
+      senderRole: 'owner' as const,
+      sender: 'owner' as const,
+      senderName: 'TrendPro Store Owner',
+      senderEmail: OWNER_EMAIL,
       customerId: custId,
-      userName: 'TrendPro Store Owner',
-      userEmail: 'saurav586kumar@gmail.com',
-      message: reply,
-      sender: 'owner',
-      orderId: orderId || undefined,
-      createdAt: new Date().toISOString(),
+      userName: customerName,
+      userEmail: customerEmail,
+      message: reply.trim(),
+      imageUrl: imageUrl || null,
+      imageFileName: imageFileName || null,
+      orderId: orderId || null,
+      createdAt: now,
       isRead: false,
-    };
-    await addDoc(collection(db, 'supportMessages'), newMsg);
+    });
+
+    const docRef = await addDoc(collection(db, 'supportMessages'), newMsg);
+
+    // Update conversation metadata
+    try {
+      await setDoc(
+        doc(db, 'supportConversations', conversationId),
+        sanitizeForFirestore({
+          id: conversationId,
+          userId: targetUserId,
+          customerId: custId,
+          customerName,
+          customerEmail,
+          lastMessage: reply.trim() || (imageUrl ? '📷 [Image Attachment]' : 'Owner Reply'),
+          lastMessageAt: now,
+          lastSender: 'owner',
+          orderId: orderId || null,
+          updatedAt: now,
+        }),
+        { merge: true }
+      );
+    } catch (e) {
+      console.warn('Conversation sync notice:', e);
+    }
+
+    // In-app notification for the customer
+    try {
+      await addDoc(
+        collection(db, 'notifications'),
+        sanitizeForFirestore({
+          userId: targetUserId,
+          title: 'Store Owner Replied to Your Chat',
+          message: reply.trim() || 'Store owner sent an image attachment.',
+          type: 'system',
+          link: '/support',
+          isRead: false,
+          createdAt: now,
+        })
+      );
+    } catch (e) {
+      console.warn('Notification notice:', e);
+    }
+
+    return docRef.id;
+  };
+
+  // Mark chat messages as read
+  const markChatMessagesAsRead = async (chatUserId: string, readerRole: 'customer' | 'owner') => {
+    if (!currentUser) return;
+    const senderToMark = readerRole === 'customer' ? 'owner' : 'customer';
+    const unreadMsgs = supportMessages.filter(
+      (m) => m.userId === chatUserId && m.sender === senderToMark && !m.isRead
+    );
+    for (const msg of unreadMsgs) {
+      try {
+        await updateDoc(doc(db, 'supportMessages', msg.id), {
+          isRead: true,
+          readAt: new Date().toISOString(),
+        });
+      } catch (e) {
+        console.warn('Error marking message read:', e);
+      }
+    }
   };
 
   // OWNER CREDITS WALLET OF ANY CUSTOMER DIRECTLY FROM CHAT
@@ -1184,6 +1321,7 @@ export const StoreProvider: React.FC<{ children: React.ReactNode }> = ({ childre
         getProductReviews,
         sendSupportMessage,
         replySupportMessage,
+        markChatMessagesAsRead,
         creditCustomerWalletFromChat,
         redeemGiftCard,
         markNotificationAsRead,

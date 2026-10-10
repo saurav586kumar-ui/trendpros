@@ -235,16 +235,26 @@ export interface StoreConfig {
 
 export interface SupportMessage {
   id: string;
+  conversationId?: string;
   userId: string;
+  senderId?: string;
+  recipientId?: string;
+  senderRole?: 'customer' | 'owner';
+  sender: 'customer' | 'owner';
+  senderName?: string;
+  senderEmail?: string;
   customerId: string;
   userName: string;
   userEmail: string;
   message: string;
-  sender: 'customer' | 'owner';
+  imageUrl?: string;
+  imageFileName?: string;
   orderId?: string;
   walletCredited?: number;
   createdAt: string;
   isRead: boolean;
+  readAt?: string;
+  status?: 'sending' | 'sent' | 'failed';
 }
 
 export interface NotificationItem {
