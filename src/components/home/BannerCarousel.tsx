@@ -18,7 +18,7 @@ export const BannerCarousel: React.FC<BannerCarouselProps> = ({ banners, onNavig
 
     const timer = setInterval(() => {
       setCurrentIdx((prev) => (prev + 1) % activeBanners.length);
-    }, 4500);
+    }, 2500);
 
     return () => clearInterval(timer);
   }, [activeBanners.length, isPaused]);

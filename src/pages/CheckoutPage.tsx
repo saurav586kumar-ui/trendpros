@@ -47,23 +47,30 @@ export const CheckoutPage: React.FC<CheckoutPageProps> = ({
 
   const walletBalance = userProfile?.walletBalance || 0;
 
-  const [savedAddresses, setSavedAddresses] = useState<Address[]>([
-    {
-      id: 'addr-default-1',
-      userId: currentUser?.uid || 'guest',
-      name: currentUser?.displayName || 'Saurav Kumar',
-      phone: '9876543210',
-      pincode: '560001',
-      locality: 'Indiranagar 100ft Road',
-      addressLine: 'Flat 402, Prestige Tower, 12th Main',
-      city: 'Bengaluru',
-      state: 'Karnataka',
-      type: 'home',
-      isDefault: true,
-    },
-  ]);
+  const [savedAddresses, setSavedAddresses] = useState<Address[]>(() => {
+    try {
+      const key = currentUser ? `trendpro_addresses_${currentUser.uid}` : 'trendpro_guest_addresses';
+      const saved = localStorage.getItem(key);
+      if (saved) {
+        const parsed = JSON.parse(saved);
+        if (Array.isArray(parsed) && parsed.length > 0) return parsed;
+      }
+    } catch {}
+    return [];
+  });
 
-  const [selectedAddressId, setSelectedAddressId] = useState<string>('addr-default-1');
+  const [selectedAddressId, setSelectedAddressId] = useState<string>(() => {
+    try {
+      const key = currentUser ? `trendpro_addresses_${currentUser.uid}` : 'trendpro_guest_addresses';
+      const saved = localStorage.getItem(key);
+      if (saved) {
+        const parsed = JSON.parse(saved);
+        if (Array.isArray(parsed) && parsed.length > 0) return parsed[0].id;
+      }
+    } catch {}
+    return '';
+  });
+
   const [showNewAddressModal, setShowNewAddressModal] = useState(false);
   const [newAddress, setNewAddress] = useState<Partial<Address>>({
     name: currentUser?.displayName || '',
@@ -71,8 +78,8 @@ export const CheckoutPage: React.FC<CheckoutPageProps> = ({
     pincode: '',
     locality: '',
     addressLine: '',
-    city: '',
-    state: '',
+    city: 'Patna',
+    state: 'Bihar',
     type: 'home',
   });
 
@@ -87,6 +94,14 @@ export const CheckoutPage: React.FC<CheckoutPageProps> = ({
   const initialWalletUsed = checkoutParams?.walletUsed || 0;
   const totalPayable = Math.max(0, subtotal - voucherDiscount + deliveryCharge - initialWalletUsed);
 
+  // Standard 8 days delivery date calculation
+  const estimatedDeliveryDate = new Date(Date.now() + 8 * 24 * 60 * 60 * 1000).toLocaleDateString('en-IN', {
+    weekday: 'short',
+    day: 'numeric',
+    month: 'short',
+    year: 'numeric',
+  });
+
   // If order contains gift voucher, ensure COD is not selected
   useEffect(() => {
     if (containsGiftVoucher && paymentMethod === 'cod') {
@@ -100,7 +115,7 @@ export const CheckoutPage: React.FC<CheckoutPageProps> = ({
         <h2 className="text-xl font-bold text-slate-800">Your cart is empty</h2>
         <button
           onClick={() => onNavigate('products')}
-          className="mt-4 bg-indigo-600 text-white text-xs font-bold px-6 py-2.5 rounded-xl"
+          className="mt-4 bg-indigo-600 text-white text-xs font-bold px-6 py-2.5 rounded-xl cursor-pointer"
         >
           Return to Shop
         </button>
@@ -123,14 +138,19 @@ export const CheckoutPage: React.FC<CheckoutPageProps> = ({
       pincode: newAddress.pincode,
       locality: newAddress.locality || '',
       addressLine: newAddress.addressLine,
-      city: newAddress.city || 'Bengaluru',
-      state: newAddress.state || 'Karnataka',
+      city: newAddress.city || 'Patna',
+      state: newAddress.state || 'Bihar',
       type: newAddress.type || 'home',
-      isDefault: false,
+      isDefault: savedAddresses.length === 0,
     };
 
-    setSavedAddresses([...savedAddresses, addr]);
+    const updated = [...savedAddresses, addr];
+    setSavedAddresses(updated);
     setSelectedAddressId(addr.id);
+    try {
+      const key = currentUser ? `trendpro_addresses_${currentUser.uid}` : 'trendpro_guest_addresses';
+      localStorage.setItem(key, JSON.stringify(updated));
+    } catch {}
     setShowNewAddressModal(false);
   };
 
@@ -142,7 +162,8 @@ export const CheckoutPage: React.FC<CheckoutPageProps> = ({
 
     const selectedAddr = savedAddresses.find((a) => a.id === selectedAddressId);
     if (!selectedAddr) {
-      setPaymentError('Please select or add a delivery address.');
+      setPaymentError('Please add and select your delivery address to proceed.');
+      setShowNewAddressModal(true);
       return;
     }
 
@@ -172,7 +193,6 @@ export const CheckoutPage: React.FC<CheckoutPageProps> = ({
       }));
 
       const finalWalletUsed = paymentMethod === 'wallet' ? totalPayable : initialWalletUsed;
-      const finalAmountPaid = paymentMethod === 'wallet' ? 0 : totalPayable;
 
       const orderId = await createOrder({
         userId: currentUser.uid,
@@ -195,7 +215,7 @@ export const CheckoutPage: React.FC<CheckoutPageProps> = ({
         orderStatus: 'placed',
         carrier: 'TrendPro Express Logistics',
         trackingNumber: `TP-TRK-${Math.floor(10000000 + Math.random() * 90000000)}`,
-        estimatedDelivery: new Date(Date.now() + 2 * 24 * 60 * 60 * 1000).toLocaleDateString(),
+        estimatedDelivery: estimatedDeliveryDate,
       });
 
       clearCart();
@@ -272,41 +292,55 @@ export const CheckoutPage: React.FC<CheckoutPageProps> = ({
             </div>
 
             <div className="space-y-3">
-              {savedAddresses.map((addr) => {
-                const isSelected = selectedAddressId === addr.id;
-                return (
-                  <div
-                    key={addr.id}
-                    onClick={() => setSelectedAddressId(addr.id)}
-                    className={`p-4 rounded-xl border transition-all cursor-pointer flex items-start gap-3 ${
-                      isSelected
-                        ? 'border-indigo-600 bg-indigo-50/40 ring-1 ring-indigo-600'
-                        : 'border-slate-200 hover:border-slate-300'
-                    }`}
+              {savedAddresses.length === 0 ? (
+                <div className="p-6 bg-slate-50 border border-dashed border-slate-300 rounded-2xl text-center space-y-2">
+                  <p className="text-xs font-bold text-slate-700">No delivery address saved yet</p>
+                  <p className="text-[11px] text-slate-500">Please provide your destination address to receive your order.</p>
+                  <button
+                    type="button"
+                    onClick={() => setShowNewAddressModal(true)}
+                    className="mt-2 bg-indigo-600 hover:bg-indigo-700 text-white text-xs font-bold px-4 py-2 rounded-xl inline-flex items-center gap-1.5 shadow-sm cursor-pointer"
                   >
-                    <input
-                      type="radio"
-                      name="selectedAddress"
-                      checked={isSelected}
-                      onChange={() => setSelectedAddressId(addr.id)}
-                      className="mt-1 text-indigo-600"
-                    />
-                    <div className="flex-1 text-xs">
-                      <div className="flex items-center gap-2 mb-1">
-                        <span className="font-extrabold text-slate-900">{addr.name}</span>
-                        <span className="bg-slate-100 text-slate-600 font-bold px-1.5 py-0.5 rounded text-[10px] uppercase">
-                          {addr.type}
-                        </span>
-                        <span className="font-mono text-slate-500">{addr.phone}</span>
+                    <Plus className="w-3.5 h-3.5" /> + Enter Delivery Address
+                  </button>
+                </div>
+              ) : (
+                savedAddresses.map((addr) => {
+                  const isSelected = selectedAddressId === addr.id;
+                  return (
+                    <div
+                      key={addr.id}
+                      onClick={() => setSelectedAddressId(addr.id)}
+                      className={`p-4 rounded-xl border transition-all cursor-pointer flex items-start gap-3 ${
+                        isSelected
+                          ? 'border-indigo-600 bg-indigo-50/40 ring-1 ring-indigo-600'
+                          : 'border-slate-200 hover:border-slate-300'
+                      }`}
+                    >
+                      <input
+                        type="radio"
+                        name="selectedAddress"
+                        checked={isSelected}
+                        onChange={() => setSelectedAddressId(addr.id)}
+                        className="mt-1 text-indigo-600"
+                      />
+                      <div className="flex-1 text-xs">
+                        <div className="flex items-center gap-2 mb-1">
+                          <span className="font-extrabold text-slate-900">{addr.name}</span>
+                          <span className="bg-slate-100 text-slate-600 font-bold px-1.5 py-0.5 rounded text-[10px] uppercase">
+                            {addr.type}
+                          </span>
+                          <span className="font-mono text-slate-500">{addr.phone}</span>
+                        </div>
+                        <p className="text-slate-600 leading-relaxed">
+                          {addr.addressLine}, {addr.locality}, {addr.city}, {addr.state} -{' '}
+                          <strong>{addr.pincode}</strong>
+                        </p>
                       </div>
-                      <p className="text-slate-600 leading-relaxed">
-                        {addr.addressLine}, {addr.locality}, {addr.city}, {addr.state} -{' '}
-                        <strong>{addr.pincode}</strong>
-                      </p>
                     </div>
-                  </div>
-                );
-              })}
+                  );
+                })
+              )}
             </div>
           </div>
 
@@ -534,6 +568,12 @@ export const CheckoutPage: React.FC<CheckoutPageProps> = ({
             </div>
 
             <div className="pt-3 border-t border-slate-100 space-y-2 text-xs">
+              {/* 8-Day Delivery Notice */}
+              <div className="p-3 bg-emerald-50 border border-emerald-200 rounded-xl flex items-center gap-2 text-[11px] text-emerald-800 font-bold">
+                <ShieldCheck className="w-4 h-4 text-emerald-600 shrink-0" />
+                <span>Estimated Delivery: {estimatedDeliveryDate} (Standard 8-Day Express Dispatch from Samastipur Hub)</span>
+              </div>
+
               <div className="flex justify-between text-slate-600">
                 <span>Subtotal</span>
                 <span>₹{subtotal.toLocaleString()}</span>

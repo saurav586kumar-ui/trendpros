@@ -1,4 +1,5 @@
 import React, { useState, useEffect } from 'react';
+import { Bell, X } from 'lucide-react';
 import { AuthProvider } from './context/AuthContext';
 import { CartProvider } from './context/CartContext';
 import { StoreProvider } from './context/StoreContext';
@@ -32,6 +33,34 @@ import {
 export function AppContent() {
   const [currentRoute, setCurrentRoute] = useState<string>('home');
   const [routeParams, setRouteParams] = useState<Record<string, any>>({});
+  const [showNotifBanner, setShowNotifBanner] = useState(false);
+
+  // Ask for notification permission early so order & refund alerts can be sent
+  useEffect(() => {
+    if (typeof window !== 'undefined' && 'Notification' in window) {
+      if (Notification.permission === 'default') {
+        const timer = setTimeout(() => setShowNotifBanner(true), 1200);
+        return () => clearTimeout(timer);
+      }
+    }
+  }, []);
+
+  const handleEnableNotifications = async () => {
+    if (typeof window !== 'undefined' && 'Notification' in window) {
+      try {
+        const result = await Notification.requestPermission();
+        if (result === 'granted') {
+          new Notification('TrendPro Notifications Enabled', {
+            body: 'You will now receive live alerts for orders, dispatch status, cancellations, and return approvals!',
+            icon: '/favicon.ico',
+          });
+        }
+      } catch (e) {
+        console.warn('Notification permission error:', e);
+      }
+    }
+    setShowNotifBanner(false);
+  };
 
   // Synchronize route navigation
   const navigate = (route: string, params: Record<string, any> = {}) => {
@@ -102,6 +131,36 @@ export function AppContent() {
   return (
     <div className="min-h-screen flex flex-col bg-slate-50 text-slate-900 font-sans">
       <AnnouncementBar />
+
+      {/* Early Notification Permission Banner */}
+      {showNotifBanner && (
+        <div className="bg-gradient-to-r from-indigo-900 to-indigo-950 text-white px-4 py-2.5 text-xs font-semibold shadow-md border-b border-indigo-700/50 flex flex-wrap items-center justify-between gap-3 animate-in fade-in slide-in-from-top duration-200">
+          <div className="flex items-center gap-2.5">
+            <span className="p-1.5 bg-indigo-500/20 text-amber-300 rounded-lg">
+              <Bell className="w-4 h-4 animate-bounce" />
+            </span>
+            <p>
+              <strong>Enable Live Order Alerts:</strong> Get instant notifications for dispatch status, returns, and cancellation approvals.
+            </p>
+          </div>
+          <div className="flex items-center gap-2">
+            <button
+              onClick={handleEnableNotifications}
+              className="bg-amber-400 hover:bg-amber-300 text-slate-950 font-black px-3.5 py-1 rounded-xl shadow-xs transition-transform active:scale-95 cursor-pointer"
+            >
+              Allow Notifications
+            </button>
+            <button
+              onClick={() => setShowNotifBanner(false)}
+              className="p-1 text-indigo-300 hover:text-white rounded-lg cursor-pointer"
+              title="Later"
+            >
+              <X className="w-4 h-4" />
+            </button>
+          </div>
+        </div>
+      )}
+
       <Header onNavigate={navigate} currentRoute={currentRoute} />
       
       <main className="flex-1">

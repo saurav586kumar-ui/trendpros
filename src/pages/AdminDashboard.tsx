@@ -22,11 +22,16 @@ import {
   ToggleLeft,
   ToggleRight,
   Wallet,
-  Sparkles
+  Sparkles,
+  Printer,
+  Layers,
+  FolderPlus,
+  MapPin,
+  X
 } from 'lucide-react';
 import { useAuth, OWNER_EMAIL } from '../context/AuthContext';
 import { useStore } from '../context/StoreContext';
-import { Product, OrderStatus, Banner, Voucher, StoreAnnouncementConfig } from '../types';
+import { Product, OrderStatus, Banner, Voucher, StoreAnnouncementConfig, Category } from '../types';
 
 interface AdminDashboardProps {
   onNavigate: (route: string, params?: Record<string, any>) => void;
@@ -48,11 +53,13 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({ onNavigate }) =>
   const { currentUser, isAdmin, signInWithGoogle } = useAuth();
   const {
     products,
-    orders,
+    categories,
     banners,
     vouchers,
+    orders,
     supportMessages,
     announcementConfig,
+    storeConfig,
     seedInitialDataToFirestore,
     updateOrderStatus,
     handleCancelRequest,
@@ -60,6 +67,8 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({ onNavigate }) =>
     addProduct,
     updateProduct,
     deleteProduct,
+    addCategory,
+    deleteCategory,
     addBanner,
     deleteBanner,
     replySupportMessage,
@@ -71,6 +80,9 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({ onNavigate }) =>
     'overview' | 'products' | 'orders' | 'banners' | 'announcement' | 'support' | 'vouchers'
   >('overview');
 
+  // Success Notification Toast
+  const [dashboardSuccessMsg, setDashboardSuccessMsg] = useState('');
+
   // Product Modal & Image Upload
   const [productModal, setProductModal] = useState<boolean>(false);
   const [editingProductId, setEditingProductId] = useState<string | null>(null);
@@ -78,6 +90,7 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({ onNavigate }) =>
     name: '',
     brand: '',
     category: 'electronics',
+    categories: ['electronics'],
     sellingPrice: 1999,
     originalPrice: 2999,
     discountPercent: 33,
@@ -88,6 +101,33 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({ onNavigate }) =>
     highlights: ['1 Year Brand Warranty', 'Free Express Delivery'],
     isActive: true,
   });
+
+  // Multiple category selection state for product
+  const [prodCategories, setProdCategories] = useState<string[]>(['electronics']);
+
+  // Dynamic Variant rows (Left: Name like Size/Color, Right: comma-separated options)
+  const [variantRows, setVariantRows] = useState<{ name: string; optionsStr: string }[]>([
+    { name: 'Size', optionsStr: 'S, M, L, XL, XXL' },
+  ]);
+
+  // Dynamic Specifications / Features table (Left: Feature Name, Right: Value)
+  const [specRows, setSpecRows] = useState<{ key: string; value: string }[]>([
+    { key: 'Material', value: 'Premium Grade Quality' },
+    { key: 'Warranty', value: '1 Year Brand Warranty' },
+  ]);
+
+  // Category Modal
+  const [categoryModal, setCategoryModal] = useState(false);
+  const [newCat, setNewCat] = useState<{ name: string; slug: string; icon: string; description: string }>({
+    name: '',
+    slug: '',
+    icon: 'Layers',
+    description: '',
+  });
+
+  // Batch Print Packing Slips Modal
+  const [packingSlipModal, setPackingSlipModal] = useState(false);
+  const [packingSlipStatus, setPackingSlipStatus] = useState<string>('all');
 
   // Banner Modal & Image Upload
   const [bannerModal, setBannerModal] = useState(false);
@@ -105,11 +145,6 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({ onNavigate }) =>
 
   // Selected Order Status Column in Orders Tab
   const [selectedStatusCol, setSelectedStatusCol] = useState<string>('all');
-
-  // Action note prompt
-  const [actionAdminNote, setActionAdminNote] = useState('');
-  const [activeRequestOrderId, setActiveRequestOrderId] = useState<string | null>(null);
-  const [requestActionType, setRequestActionType] = useState<'cancel' | 'return' | null>(null);
 
   // Chat direct response
   const [chatReplyText, setChatReplyText] = useState<Record<string, string>>({});
@@ -196,32 +231,89 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({ onNavigate }) =>
     }
 
     try {
+      // Process variants: Left side name, Right side comma-separated options
+      const processedVariants = variantRows
+        .filter((v) => v.name.trim() && v.optionsStr.trim())
+        .map((v) => ({
+          name: v.name.trim(),
+          type: v.name.toLowerCase().includes('color') ? 'color' : 'size',
+          options: v.optionsStr
+            .split(',')
+            .map((s) => s.trim())
+            .filter(Boolean),
+        }));
+
+      // Process specifications / features table
+      const processedSpecs: Record<string, string> = {};
+      specRows.forEach((row) => {
+        if (row.key.trim() && row.value.trim()) {
+          processedSpecs[row.key.trim()] = row.value.trim();
+        }
+      });
+
+      const selectedCats = prodCategories.length ? prodCategories : [newProd.category || 'electronics'];
+
+      const productPayload = {
+        name: newProd.name,
+        slug: newProd.name.toLowerCase().replace(/[^a-z0-9]+/g, '-'),
+        brand: newProd.brand || 'TrendPro Select',
+        category: selectedCats[0] || 'electronics',
+        categories: selectedCats,
+        description: newProd.description || 'Premium quality marketplace product.',
+        highlights: newProd.highlights || ['1 Year Brand Warranty', 'Fast Express Dispatch'],
+        mainImage: newProd.mainImage,
+        images: newProd.images?.length ? newProd.images : [newProd.mainImage],
+        originalPrice: newProd.originalPrice || newProd.sellingPrice * 1.25,
+        sellingPrice: newProd.sellingPrice,
+        discountPercent:
+          Math.round(((newProd.originalPrice! - newProd.sellingPrice) / newProd.originalPrice!) * 100) || 15,
+        stock: newProd.stock || 25,
+        rating: newProd.rating || 4.8,
+        ratingCount: newProd.ratingCount || 1,
+        variants: processedVariants.length ? processedVariants : undefined,
+        specs: Object.keys(processedSpecs).length ? processedSpecs : undefined,
+        deliveryDays: 8,
+        isActive: true,
+      };
+
       if (editingProductId) {
-        await updateProduct(editingProductId, newProd);
+        await updateProduct(editingProductId, productPayload);
+        setDashboardSuccessMsg(`Product "${newProd.name}" updated successfully!`);
       } else {
-        await addProduct({
-          name: newProd.name,
-          slug: newProd.name.toLowerCase().replace(/[^a-z0-9]+/g, '-'),
-          brand: newProd.brand || 'TrendPro Select',
-          category: newProd.category || 'electronics',
-          description: newProd.description || 'Premium quality marketplace product.',
-          highlights: newProd.highlights || ['1 Year Brand Warranty'],
-          mainImage: newProd.mainImage,
-          images: newProd.images?.length ? newProd.images : [newProd.mainImage],
-          originalPrice: newProd.originalPrice || newProd.sellingPrice * 1.25,
-          sellingPrice: newProd.sellingPrice,
-          discountPercent:
-            Math.round(((newProd.originalPrice! - newProd.sellingPrice) / newProd.originalPrice!) * 100) || 15,
-          stock: newProd.stock || 25,
-          rating: 4.8,
-          ratingCount: 1,
-          isActive: true,
-        });
+        await addProduct(productPayload);
+        setDashboardSuccessMsg(`Product "${newProd.name}" published to catalog successfully!`);
       }
+
       setProductModal(false);
       setEditingProductId(null);
+      setTimeout(() => setDashboardSuccessMsg(''), 5000);
     } catch (err: any) {
       alert(err.message || 'Error saving product');
+    }
+  };
+
+  const handleSaveCategory = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!newCat.name.trim()) {
+      alert('Please enter category name');
+      return;
+    }
+
+    try {
+      await addCategory({
+        name: newCat.name.trim(),
+        slug: newCat.slug.trim() || newCat.name.toLowerCase().replace(/[^a-z0-9]+/g, '-'),
+        icon: newCat.icon || 'Layers',
+        image: 'https://images.unsplash.com/photo-1441986300917-64674bd600d8?w=400&q=80',
+        subCategories: [],
+        description: newCat.description || 'Marketplace product collection',
+      });
+      setCategoryModal(false);
+      setDashboardSuccessMsg(`New Category "${newCat.name}" created and added to store!`);
+      setNewCat({ name: '', slug: '', icon: 'Layers', description: '' });
+      setTimeout(() => setDashboardSuccessMsg(''), 5000);
+    } catch (err: any) {
+      alert(err.message || 'Error creating category');
     }
   };
 
@@ -241,6 +333,8 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({ onNavigate }) =>
       });
       setBannerModal(false);
       setNewBanner({ title: '', imageUrl: '', link: '/products', order: 1, isActive: true });
+      setDashboardSuccessMsg('Promotional banner published successfully (pure image with click redirect)!');
+      setTimeout(() => setDashboardSuccessMsg(''), 5000);
     } catch (err: any) {
       alert(err.message || 'Error saving banner');
     }
@@ -322,6 +416,18 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({ onNavigate }) =>
           </button>
         </div>
       </div>
+
+      {dashboardSuccessMsg && (
+        <div className="p-4 bg-emerald-50 border border-emerald-300 text-emerald-800 text-xs font-bold rounded-2xl flex items-center justify-between shadow-xs animate-in fade-in slide-in-from-top-2">
+          <div className="flex items-center gap-2">
+            <CheckCircle className="w-5 h-5 text-emerald-600 shrink-0" />
+            <span className="text-sm">{dashboardSuccessMsg}</span>
+          </div>
+          <button onClick={() => setDashboardSuccessMsg('')} className="p-1 hover:text-emerald-950">
+            <X className="w-4 h-4" />
+          </button>
+        </div>
+      )}
 
       {seedingStatus && (
         <div className="p-4 bg-emerald-50 border border-emerald-300 text-emerald-800 text-xs font-bold rounded-2xl flex items-center gap-2">
@@ -425,6 +531,17 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({ onNavigate }) =>
                 Filter by granular order status column or review pending customer cancellation & return requests.
               </p>
             </div>
+            
+            <button
+              onClick={() => {
+                setPackingSlipStatus('all');
+                setPackingSlipModal(true);
+              }}
+              className="bg-indigo-600 hover:bg-indigo-700 text-white text-xs font-bold px-4 py-2.5 rounded-xl shadow-md flex items-center gap-2 self-start sm:self-auto transition-all cursor-pointer active:scale-95"
+            >
+              <Printer className="w-4 h-4" />
+              <span>Print All Orders PDF / Bills</span>
+            </button>
           </div>
 
           {/* Granular Order Status Columns Filter */}
@@ -487,7 +604,19 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({ onNavigate }) =>
                     </div>
 
                     <div className="flex items-center gap-2">
-                      <span className="text-slate-500 font-bold">Move Status Column:</span>
+                      <button
+                        onClick={() => {
+                          setPackingSlipStatus(o.id);
+                          setPackingSlipModal(true);
+                        }}
+                        className="flex items-center gap-1.5 px-3 py-1.5 bg-slate-100 hover:bg-slate-200 text-slate-800 font-bold rounded-xl transition-colors cursor-pointer"
+                        title="Print Packing Slip / Bill"
+                      >
+                        <Printer className="w-3.5 h-3.5 text-slate-600" />
+                        <span>Print Bill</span>
+                      </button>
+
+                      <span className="text-slate-500 font-bold">Move Status:</span>
                       <select
                         value={o.orderStatus}
                         onChange={(e) => updateOrderStatus(o.id, e.target.value as OrderStatus)}
@@ -622,19 +751,27 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({ onNavigate }) =>
                 setNewProd({
                   name: '',
                   brand: '',
-                  category: 'electronics',
+                  category: categories[0]?.slug || 'electronics',
                   sellingPrice: 1999,
                   originalPrice: 2999,
                   stock: 25,
                   mainImage: '',
                   images: [],
                   description: '',
+                  highlights: ['1 Year Brand Warranty', 'Free Express Delivery'],
+                  isActive: true,
                 });
+                setProdCategories([categories[0]?.slug || 'electronics']);
+                setVariantRows([{ name: 'Size', optionsStr: 'S, M, L, XL, XXL' }]);
+                setSpecRows([
+                  { key: 'Material', value: 'Premium Grade Quality' },
+                  { key: 'Warranty', value: '1 Year Brand Warranty' },
+                ]);
                 setProductModal(true);
               }}
-              className="bg-indigo-600 hover:bg-indigo-700 text-white text-xs font-bold px-4 py-2 rounded-xl flex items-center gap-1.5 shadow-sm"
+              className="bg-indigo-600 hover:bg-indigo-700 text-white text-xs font-bold px-4 py-2 rounded-xl flex items-center gap-1.5 shadow-sm cursor-pointer"
             >
-              <Plus className="w-4 h-4" /> Add Product (With File Upload)
+              <Plus className="w-4 h-4" /> Add Product (With Variants & Specs)
             </button>
           </div>
 
@@ -667,9 +804,31 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({ onNavigate }) =>
                         onClick={() => {
                           setEditingProductId(p.id);
                           setNewProd(p);
+                          setProdCategories(p.categories?.length ? p.categories : [p.category]);
+                          if (p.variants && p.variants.length > 0) {
+                            setVariantRows(
+                              p.variants.map((v) => ({
+                                name: v.name || v.type || 'Size',
+                                optionsStr: v.options.join(', '),
+                              }))
+                            );
+                          } else {
+                            setVariantRows([{ name: 'Size', optionsStr: 'S, M, L, XL, XXL' }]);
+                          }
+                          if (p.specs && Object.keys(p.specs).length > 0) {
+                            setSpecRows(
+                              Object.entries(p.specs).map(([key, value]) => ({ key, value }))
+                            );
+                          } else {
+                            setSpecRows([
+                              { key: 'Material', value: 'Premium Grade Quality' },
+                              { key: 'Warranty', value: '1 Year Brand Warranty' },
+                            ]);
+                          }
                           setProductModal(true);
                         }}
-                        className="text-slate-600 hover:text-indigo-600 p-1"
+                        className="text-slate-600 hover:text-indigo-600 p-1 cursor-pointer"
+                        title="Edit Product"
                       >
                         <Edit className="w-4 h-4" />
                       </button>
@@ -962,20 +1121,43 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({ onNavigate }) =>
                   />
                 </div>
                 <div>
-                  <label className="font-bold text-slate-700 block mb-1">Category</label>
-                  <select
-                    value={newProd.category}
-                    onChange={(e) => setNewProd({ ...newProd, category: e.target.value })}
-                    className="w-full bg-slate-50 border border-slate-200 rounded-xl p-2.5 outline-hidden"
-                  >
-                    <option value="electronics">Electronics</option>
-                    <option value="fashion">Fashion</option>
-                    <option value="home-kitchen">Home & Kitchen</option>
-                    <option value="beauty">Beauty</option>
-                    <option value="grocery">Grocery</option>
-                    <option value="accessories">Accessories</option>
-                    <option value="gift-cards">Gift Cards & Vouchers</option>
-                  </select>
+                  <div className="flex items-center justify-between mb-1">
+                    <label className="font-bold text-slate-700">Categories (Can select multiple) *</label>
+                    <button
+                      type="button"
+                      onClick={() => setCategoryModal(true)}
+                      className="text-[11px] font-bold text-indigo-600 hover:text-indigo-800 flex items-center gap-1 cursor-pointer"
+                    >
+                      <FolderPlus className="w-3 h-3" /> + New Category
+                    </button>
+                  </div>
+                  <div className="flex flex-wrap gap-1.5 p-2 bg-slate-50 border border-slate-200 rounded-xl max-h-28 overflow-y-auto">
+                    {categories.map((c) => {
+                      const isSelected = prodCategories.includes(c.slug);
+                      return (
+                        <button
+                          type="button"
+                          key={c.id}
+                          onClick={() => {
+                            if (isSelected) {
+                              if (prodCategories.length > 1) {
+                                setProdCategories(prodCategories.filter((slug) => slug !== c.slug));
+                              }
+                            } else {
+                              setProdCategories([...prodCategories, c.slug]);
+                            }
+                          }}
+                          className={`px-2.5 py-1 rounded-lg text-[11px] font-bold transition-all border cursor-pointer ${
+                            isSelected
+                              ? 'bg-indigo-600 text-white border-indigo-600 shadow-xs'
+                              : 'bg-white text-slate-600 border-slate-200 hover:border-slate-300'
+                          }`}
+                        >
+                          {c.name} {isSelected && '✓'}
+                        </button>
+                      );
+                    })}
+                  </div>
                 </div>
               </div>
 
@@ -1073,6 +1255,122 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({ onNavigate }) =>
                 />
               </div>
 
+              {/* Product Variants & Sizes (Left: Name, Right: comma-separated sizes) */}
+              <div className="bg-slate-50 p-3.5 rounded-2xl border border-slate-200 space-y-2.5">
+                <div className="flex items-center justify-between">
+                  <div>
+                    <label className="font-bold text-slate-800 block text-xs">
+                      Product Variants & Sizes (Optional)
+                    </label>
+                    <p className="text-[10px] text-slate-400">
+                      Left: Variant Name (Size, Color) • Right: Options with comma (S, M, L, XL or 28, 30, 32)
+                    </p>
+                  </div>
+                  <button
+                    type="button"
+                    onClick={() => setVariantRows([...variantRows, { name: 'Size', optionsStr: 'S, M, L, XL' }])}
+                    className="px-2.5 py-1 text-[11px] font-bold text-indigo-600 bg-indigo-50 border border-indigo-200 rounded-lg hover:bg-indigo-100 cursor-pointer"
+                  >
+                    + Add Variant Group
+                  </button>
+                </div>
+
+                {variantRows.map((v, idx) => (
+                  <div key={idx} className="flex items-center gap-2">
+                    <input
+                      type="text"
+                      placeholder="Variant (e.g. Size)"
+                      value={v.name}
+                      onChange={(e) => {
+                        const updated = [...variantRows];
+                        updated[idx].name = e.target.value;
+                        setVariantRows(updated);
+                      }}
+                      className="w-1/3 bg-white border border-slate-200 rounded-xl p-2 text-xs font-semibold outline-hidden"
+                    />
+                    <input
+                      type="text"
+                      placeholder="Options (e.g. S, M, L, XL, XXL or 28, 30, 32)"
+                      value={v.optionsStr}
+                      onChange={(e) => {
+                        const updated = [...variantRows];
+                        updated[idx].optionsStr = e.target.value;
+                        setVariantRows(updated);
+                      }}
+                      className="flex-1 bg-white border border-slate-200 rounded-xl p-2 text-xs font-semibold outline-hidden"
+                    />
+                    {variantRows.length > 1 && (
+                      <button
+                        type="button"
+                        onClick={() => setVariantRows(variantRows.filter((_, i) => i !== idx))}
+                        className="p-1.5 text-slate-400 hover:text-rose-600 rounded-lg cursor-pointer"
+                        title="Remove Variant"
+                      >
+                        <Trash2 className="w-3.5 h-3.5" />
+                      </button>
+                    )}
+                  </div>
+                ))}
+              </div>
+
+              {/* Product Specifications & Features Catalog Table (Left: Name, Right: Value) */}
+              <div className="bg-slate-50 p-3.5 rounded-2xl border border-slate-200 space-y-2.5">
+                <div className="flex items-center justify-between">
+                  <div>
+                    <label className="font-bold text-slate-800 block text-xs">
+                      Catalog Features & Specifications Table (Optional)
+                    </label>
+                    <p className="text-[10px] text-slate-400">
+                      Dynamic table: Left is Feature / Catalog Name, Right is Value
+                    </p>
+                  </div>
+                  <button
+                    type="button"
+                    onClick={() => setSpecRows([...specRows, { key: '', value: '' }])}
+                    className="px-2.5 py-1 text-[11px] font-bold text-indigo-600 bg-indigo-50 border border-indigo-200 rounded-lg hover:bg-indigo-100 cursor-pointer"
+                  >
+                    + Add Feature Row
+                  </button>
+                </div>
+
+                {specRows.map((row, idx) => (
+                  <div key={idx} className="flex items-center gap-2">
+                    <input
+                      type="text"
+                      placeholder="Feature Name (e.g. Fabric / Material / Battery)"
+                      value={row.key}
+                      onChange={(e) => {
+                        const updated = [...specRows];
+                        updated[idx].key = e.target.value;
+                        setSpecRows(updated);
+                      }}
+                      className="w-1/2 bg-white border border-slate-200 rounded-xl p-2 text-xs font-semibold outline-hidden"
+                    />
+                    <input
+                      type="text"
+                      placeholder="Feature Value (e.g. 100% Cotton / 30h Playtime)"
+                      value={row.value}
+                      onChange={(e) => {
+                        const updated = [...specRows];
+                        updated[idx].value = e.target.value;
+                        setSpecRows(updated);
+                      }}
+                      className="w-1/2 bg-white border border-slate-200 rounded-xl p-2 text-xs font-semibold outline-hidden"
+                    />
+                    {specRows.length > 1 && (
+                      <button
+                        type="button"
+                        onClick={() => setSpecRows(specRows.filter((_, i) => i !== idx))}
+                        className="p-1.5 text-slate-400 hover:text-rose-600 rounded-lg cursor-pointer"
+                        title="Remove Feature"
+                      >
+                        <Trash2 className="w-3.5 h-3.5" />
+                      </button>
+                    )}
+                  </div>
+                ))}
+              </div>
+
               <div className="flex gap-3 pt-4">
                 <button
                   type="button"
@@ -1149,18 +1447,302 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({ onNavigate }) =>
                 <button
                   type="button"
                   onClick={() => setBannerModal(false)}
-                  className="flex-1 py-2.5 text-xs font-bold text-slate-600 bg-slate-100 rounded-xl"
+                  className="flex-1 py-2.5 text-xs font-bold text-slate-600 bg-slate-100 rounded-xl cursor-pointer"
                 >
                   Cancel
                 </button>
                 <button
                   type="submit"
-                  className="flex-1 py-2.5 text-xs font-bold text-white bg-indigo-600 hover:bg-indigo-700 rounded-xl shadow-md"
+                  className="flex-1 py-2.5 text-xs font-bold text-white bg-indigo-600 hover:bg-indigo-700 rounded-xl shadow-md cursor-pointer"
                 >
                   Save Banner
                 </button>
               </div>
             </form>
+          </div>
+        </div>
+      )}
+
+      {/* Category Modal: Add New Store Category */}
+      {categoryModal && (
+        <div className="fixed inset-0 z-50 bg-black/50 backdrop-blur-xs flex items-center justify-center p-4">
+          <div className="bg-white rounded-3xl max-w-md w-full p-6 shadow-2xl border border-slate-200 space-y-4">
+            <div>
+              <h3 className="text-base font-bold text-slate-900">Add New Category</h3>
+              <p className="text-xs text-slate-500">
+                Created categories will immediately appear in product forms, header filters, and category lists.
+              </p>
+            </div>
+
+            <form onSubmit={handleSaveCategory} className="space-y-3 text-xs">
+              <div>
+                <label className="font-bold text-slate-700 block mb-1">Category Name *</label>
+                <input
+                  type="text"
+                  required
+                  placeholder="e.g. Footwear & Shoes"
+                  value={newCat.name}
+                  onChange={(e) => setNewCat({ ...newCat, name: e.target.value })}
+                  className="w-full bg-slate-50 border border-slate-200 rounded-xl p-2.5 outline-hidden"
+                />
+              </div>
+
+              <div>
+                <label className="font-bold text-slate-700 block mb-1">Slug (URL identifier)</label>
+                <input
+                  type="text"
+                  placeholder="e.g. footwear-shoes (auto-generated if empty)"
+                  value={newCat.slug}
+                  onChange={(e) => setNewCat({ ...newCat, slug: e.target.value })}
+                  className="w-full bg-slate-50 border border-slate-200 rounded-xl p-2.5 outline-hidden font-mono"
+                />
+              </div>
+
+              <div>
+                <label className="font-bold text-slate-700 block mb-1">Description (Optional)</label>
+                <input
+                  type="text"
+                  placeholder="e.g. Premium casual and sports shoes"
+                  value={newCat.description}
+                  onChange={(e) => setNewCat({ ...newCat, description: e.target.value })}
+                  className="w-full bg-slate-50 border border-slate-200 rounded-xl p-2.5 outline-hidden"
+                />
+              </div>
+
+              <div className="flex gap-2 pt-2">
+                <button
+                  type="button"
+                  onClick={() => setCategoryModal(false)}
+                  className="flex-1 py-2.5 text-xs font-bold text-slate-600 bg-slate-100 rounded-xl cursor-pointer"
+                >
+                  Cancel
+                </button>
+                <button
+                  type="submit"
+                  className="flex-1 py-2.5 text-xs font-bold text-white bg-indigo-600 hover:bg-indigo-700 rounded-xl shadow-md cursor-pointer"
+                >
+                  Create Category
+                </button>
+              </div>
+            </form>
+          </div>
+        </div>
+      )}
+
+      {/* Batch Packing Slips / Print PDF Bills Modal for Store Owner */}
+      {packingSlipModal && (
+        <div className="fixed inset-0 z-50 bg-black/60 backdrop-blur-xs flex items-center justify-center p-2 sm:p-4 overflow-y-auto">
+          <div className="bg-white rounded-3xl max-w-4xl w-full p-4 sm:p-6 shadow-2xl border border-slate-200 max-h-[92vh] flex flex-col">
+            {/* Modal Actions Header (Hidden in Print) */}
+            <div className="flex flex-wrap items-center justify-between gap-3 pb-4 border-b border-slate-200 print:hidden shrink-0">
+              <div>
+                <h3 className="text-base font-bold text-slate-900 flex items-center gap-2">
+                  <Printer className="w-5 h-5 text-indigo-600" />
+                  <span>Print Orders PDF Bills & Packing Slips</span>
+                </h3>
+                <p className="text-xs text-slate-500">
+                  Batch print all order invoices for packaging & dispatch from Shivaji Nagar, Samastipur, Bihar.
+                </p>
+              </div>
+
+              <div className="flex items-center gap-2">
+                {/* Filter Selector */}
+                <select
+                  value={packingSlipStatus}
+                  onChange={(e) => setPackingSlipStatus(e.target.value)}
+                  className="bg-slate-50 border border-slate-200 rounded-xl p-2 text-xs font-bold text-slate-700 outline-hidden"
+                >
+                  <option value="all">All Orders ({orders.length})</option>
+                  <option value="ordered">Status: Ordered</option>
+                  <option value="confirmed">Status: Confirmed</option>
+                  <option value="packed">Status: Packed</option>
+                  <option value="dispatched">Status: Dispatched</option>
+                  <option value="delivered">Status: Delivered</option>
+                </select>
+
+                <button
+                  onClick={() => window.print()}
+                  className="bg-indigo-600 hover:bg-indigo-700 text-white text-xs font-bold px-4 py-2 rounded-xl shadow-md flex items-center gap-1.5 transition-all cursor-pointer active:scale-95"
+                >
+                  <Printer className="w-4 h-4" />
+                  <span>Print / Save PDF Now</span>
+                </button>
+
+                <button
+                  onClick={() => setPackingSlipModal(false)}
+                  className="p-2 text-slate-400 hover:text-slate-700 rounded-xl cursor-pointer"
+                >
+                  <X className="w-5 h-5" />
+                </button>
+              </div>
+            </div>
+
+            {/* Printable Area */}
+            <div className="overflow-y-auto flex-1 p-2 sm:p-4 space-y-8 bg-slate-100/60 print:bg-white print:p-0 print:space-y-6">
+              {(() => {
+                const slipsToRender = orders.filter((o) => {
+                  if (packingSlipStatus === 'all') return true;
+                  if (o.id === packingSlipStatus) return true;
+                  return o.orderStatus === packingSlipStatus;
+                });
+
+                if (slipsToRender.length === 0) {
+                  return (
+                    <div className="p-12 text-center text-slate-400 text-xs">
+                      No orders found matching the selected filter.
+                    </div>
+                  );
+                }
+
+                return slipsToRender.map((o, idx) => (
+                  <div
+                    key={o.id}
+                    className="p-6 bg-white border border-slate-300 rounded-2xl shadow-xs print:border print:border-slate-400 print:shadow-none print:p-6 print:rounded-none space-y-4"
+                    style={{ pageBreakAfter: 'always', breakAfter: 'page' }}
+                  >
+                    {/* Header */}
+                    <div className="flex justify-between items-start border-b-2 border-slate-900 pb-3">
+                      <div>
+                        <div className="flex items-center gap-2">
+                          <h1 className="text-xl sm:text-2xl font-black tracking-tight text-slate-900 uppercase">
+                            TRENDPRO
+                          </h1>
+                          <span className="text-[10px] font-bold uppercase tracking-wider bg-slate-900 text-white px-2 py-0.5 rounded">
+                            Marketplace Invoice
+                          </span>
+                        </div>
+                        <p className="text-[11px] text-slate-600 font-bold mt-0.5">
+                          Order Packaging Slip & Delivery Bill
+                        </p>
+                        <p className="text-[10px] text-slate-600 mt-1">
+                          <strong>Dispatch Origin Facility:</strong> Near Station Road, Shivaji Nagar, Samastipur, Bihar - 848101
+                        </p>
+                      </div>
+
+                      <div className="text-right">
+                        <p className="text-sm font-mono font-black text-slate-900">#{o.id}</p>
+                        <p className="text-[10px] text-slate-500">{new Date(o.createdAt).toLocaleString()}</p>
+                        <span className="inline-block mt-1 px-2.5 py-0.5 bg-indigo-50 border border-indigo-200 text-indigo-700 rounded text-[10px] font-bold uppercase">
+                          Live Status: {o.orderStatus}
+                        </span>
+                      </div>
+                    </div>
+
+                    {/* Customer & Destination Details */}
+                    <div className="grid grid-cols-1 sm:grid-cols-2 gap-4 bg-slate-50 print:bg-white p-3.5 rounded-xl border border-slate-200 text-xs">
+                      <div>
+                        <span className="text-[10px] font-bold text-slate-400 uppercase tracking-wider block">
+                          Delivery Destination (Customer):
+                        </span>
+                        <p className="font-black text-slate-900 text-sm mt-0.5">
+                          {o.shippingAddress?.name || o.customerName}
+                        </p>
+                        <p className="text-slate-700 mt-0.5">
+                          Phone: <strong>{o.shippingAddress?.phone}</strong>
+                        </p>
+                        <p className="text-slate-600 leading-relaxed">
+                          {o.shippingAddress?.addressLine}, {o.shippingAddress?.locality}
+                        </p>
+                        <p className="text-slate-800 font-bold">
+                          {o.shippingAddress?.city}, {o.shippingAddress?.state} - {o.shippingAddress?.pincode}
+                        </p>
+                        <p className="text-[10px] text-slate-400 mt-1 font-mono">
+                          Customer ID: {o.customerId}
+                        </p>
+                      </div>
+
+                      <div className="space-y-1 text-slate-600">
+                        <span className="text-[10px] font-bold text-slate-400 uppercase tracking-wider block">
+                          Dispatch & Payment Details:
+                        </span>
+                        <p>
+                          Dispatch Origin: <strong className="text-slate-900">Shivaji Nagar, Samastipur, Bihar</strong>
+                        </p>
+                        <p>
+                          Payment Mode: <strong className="uppercase text-slate-900">{o.paymentMethod}</strong> ({o.paymentStatus.toUpperCase()})
+                        </p>
+                        <p>
+                          Estimated Delivery: <strong className="text-slate-900">{o.estimatedDelivery || '8 Days from Order Date'}</strong>
+                        </p>
+                        <p>
+                          Website Portal: <strong className="text-indigo-600">trendpro.netlify.app</strong>
+                        </p>
+                      </div>
+                    </div>
+
+                    {/* Items Table */}
+                    <table className="w-full text-xs text-left border border-slate-200">
+                      <thead className="bg-slate-100 text-slate-700 font-bold border-b border-slate-200">
+                        <tr>
+                          <th className="p-2 w-10 text-center">#</th>
+                          <th className="p-2">Item Description</th>
+                          <th className="p-2">Size / Variant</th>
+                          <th className="p-2 text-center w-16">Qty</th>
+                          <th className="p-2 text-right w-24">Price</th>
+                          <th className="p-2 text-right w-28">Total</th>
+                        </tr>
+                      </thead>
+                      <tbody className="divide-y divide-slate-100">
+                        {o.items.map((it, itemIdx) => (
+                          <tr key={itemIdx}>
+                            <td className="p-2 font-mono text-slate-400 text-center">{itemIdx + 1}</td>
+                            <td className="p-2 font-bold text-slate-900">
+                              {it.name}
+                              <span className="block text-[10px] text-slate-400 font-normal">{it.brand}</span>
+                            </td>
+                            <td className="p-2 text-indigo-700 font-bold">{it.variant || 'Standard'}</td>
+                            <td className="p-2 text-center font-black text-slate-900">{it.quantity}</td>
+                            <td className="p-2 text-right text-slate-600">₹{it.price.toLocaleString()}</td>
+                            <td className="p-2 text-right font-black text-slate-900">
+                              ₹{(it.price * it.quantity).toLocaleString()}
+                            </td>
+                          </tr>
+                        ))}
+                      </tbody>
+                      <tfoot className="bg-slate-50 border-t border-slate-200 font-bold">
+                        {o.pricing.voucherDiscount > 0 && (
+                          <tr>
+                            <td colSpan={5} className="p-1.5 text-right text-emerald-600">
+                              Coupon Discount ({o.pricing.voucherCode}):
+                            </td>
+                            <td className="p-1.5 text-right text-emerald-600">
+                              - ₹{o.pricing.voucherDiscount.toLocaleString()}
+                            </td>
+                          </tr>
+                        )}
+                        {o.pricing.walletUsed > 0 && (
+                          <tr>
+                            <td colSpan={5} className="p-1.5 text-right text-indigo-600">
+                              Wallet Credits Used:
+                            </td>
+                            <td className="p-1.5 text-right text-indigo-600">
+                              - ₹{o.pricing.walletUsed.toLocaleString()}
+                            </td>
+                          </tr>
+                        )}
+                        <tr className="border-t border-slate-300">
+                          <td colSpan={5} className="p-2 text-right text-slate-900 text-sm">
+                            Total Bill Payable:
+                          </td>
+                          <td className="p-2 text-right text-slate-900 text-base font-black">
+                            ₹{o.pricing.total.toLocaleString()}
+                          </td>
+                        </tr>
+                      </tfoot>
+                    </table>
+
+                    {/* Footer Packing Sign-Off */}
+                    <div className="flex flex-wrap justify-between items-center pt-3 text-[10px] text-slate-500 border-t border-slate-200">
+                      <span>TrendPro Dispatch Hub • Shivaji Nagar, Samastipur, Bihar • Slip {idx + 1} of {slipsToRender.length}</span>
+                      <div className="flex items-center gap-6">
+                        <span>Items Verified [ ✓ ]</span>
+                        <span>Packer Signature: __________________</span>
+                      </div>
+                    </div>
+                  </div>
+                ));
+              })()}
+            </div>
           </div>
         </div>
       )}

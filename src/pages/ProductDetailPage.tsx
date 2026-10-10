@@ -45,12 +45,25 @@ export const ProductDetailPage: React.FC<ProductDetailPageProps> = ({
   const [giftCardAmount, setGiftCardAmount] = useState<number>(1000);
   const [quantity, setQuantity] = useState(1);
   const [pincode, setPincode] = useState('560001');
-  const [pincodeStatus, setPincodeStatus] = useState<string>('Standard Delivery: Within 2 Days | Free');
+
+  // Standard 8 days delivery date calculation
+  const deliveryDate8Days = new Date(Date.now() + 8 * 24 * 60 * 60 * 1000).toLocaleDateString('en-IN', {
+    weekday: 'short',
+    day: 'numeric',
+    month: 'short',
+  });
+
+  const [pincodeStatus, setPincodeStatus] = useState<string>(
+    `Standard Delivery: By ${deliveryDate8Days} (8 Days Dispatch) | Free`
+  );
+
   const [reviews, setReviews] = useState<Review[]>([]);
+  const [showAllReviews, setShowAllReviews] = useState(false);
   const [showReviewModal, setShowReviewModal] = useState(false);
   const [reviewRating, setReviewRating] = useState(5);
   const [reviewTitle, setReviewTitle] = useState('');
   const [reviewComment, setReviewComment] = useState('');
+  const [reviewImages, setReviewImages] = useState<string[]>([]);
   const [reviewSubmitting, setReviewSubmitting] = useState(false);
 
   useEffect(() => {
@@ -95,11 +108,7 @@ export const ProductDetailPage: React.FC<ProductDetailPageProps> = ({
 
   const handlePincodeCheck = () => {
     if (pincode.length === 6 && /^\d+$/.test(pincode)) {
-      if (['560001', '110001', '400001', '700001'].includes(pincode)) {
-        setPincodeStatus('⚡ Express Next-Day Delivery available for your location!');
-      } else {
-        setPincodeStatus('Standard Delivery: Delivered within 2-3 Days | Free');
-      }
+      setPincodeStatus(`Standard Delivery: Expected by ${deliveryDate8Days} (8 Days Dispatch from Samastipur Hub) | Free Delivery`);
     } else {
       setPincodeStatus('Please enter a valid 6-digit Indian PIN code.');
     }
@@ -124,22 +133,41 @@ export const ProductDetailPage: React.FC<ProductDetailPageProps> = ({
     }
   };
 
+  const handleReviewImageFile = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (file) {
+      const reader = new FileReader();
+      reader.onloadend = () => {
+        if (typeof reader.result === 'string') {
+          setReviewImages((prev) => [...prev, reader.result as string]);
+        }
+      };
+      reader.readAsDataURL(file);
+    }
+  };
+
   const handleReviewSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!currentUser) {
       signInWithGoogle();
       return;
     }
-    if (!reviewTitle.trim() || !reviewComment.trim()) return;
 
     setReviewSubmitting(true);
     try {
-      await addReview(product.id, reviewRating, reviewTitle, reviewComment);
+      await addReview(
+        product.id,
+        reviewRating,
+        reviewTitle.trim() || undefined,
+        reviewComment.trim() || undefined,
+        reviewImages.length ? reviewImages : undefined
+      );
       const updated = await getProductReviews(product.id);
       setReviews(updated);
       setShowReviewModal(false);
       setReviewTitle('');
       setReviewComment('');
+      setReviewImages([]);
     } catch (err: any) {
       alert(err.message || 'Error submitting review');
     } finally {
@@ -330,27 +358,32 @@ export const ProductDetailPage: React.FC<ProductDetailPageProps> = ({
               </p>
             </div>
           ) : (
-            /* Standard Variants Selector */
+            /* Standard Variants & Size Selector */
             product.variants && product.variants.length > 0 && (
-              <div className="space-y-3">
-                <label className="text-xs font-bold text-slate-800 uppercase tracking-wider block">
-                  Select Option: <span className="text-indigo-600 font-normal">{selectedVariant}</span>
-                </label>
-                <div className="flex flex-wrap gap-2">
-                  {product.variants[0].options.map((opt) => (
-                    <button
-                      key={opt}
-                      onClick={() => setSelectedVariant(opt)}
-                      className={`px-3.5 py-1.5 rounded-xl text-xs font-semibold border transition-all ${
-                        selectedVariant === opt
-                          ? 'bg-indigo-600 text-white border-indigo-600 shadow-md shadow-indigo-500/20'
-                          : 'bg-white text-slate-700 border-slate-200 hover:border-slate-300'
-                      }`}
-                    >
-                      {opt}
-                    </button>
-                  ))}
-                </div>
+              <div className="space-y-4">
+                {product.variants.map((vGroup, vIdx) => (
+                  <div key={vIdx} className="space-y-2">
+                    <label className="text-xs font-bold text-slate-800 uppercase tracking-wider block">
+                      Choose {vGroup.name}: <span className="text-indigo-600 font-bold">{selectedVariant}</span>
+                    </label>
+                    <div className="flex flex-wrap gap-2">
+                      {vGroup.options.map((opt) => (
+                        <button
+                          key={opt}
+                          type="button"
+                          onClick={() => setSelectedVariant(opt)}
+                          className={`px-4 py-2 rounded-xl text-xs font-bold border transition-all cursor-pointer ${
+                            selectedVariant === opt
+                              ? 'bg-indigo-600 text-white border-indigo-600 shadow-md shadow-indigo-500/20 scale-105'
+                              : 'bg-white text-slate-700 border-slate-200 hover:border-slate-300'
+                          }`}
+                        >
+                          {opt}
+                        </button>
+                      ))}
+                    </div>
+                  </div>
+                ))}
               </div>
             )
           )}
@@ -576,34 +609,65 @@ export const ProductDetailPage: React.FC<ProductDetailPageProps> = ({
           </div>
         </div>
 
-        {/* Reviews List */}
+        {/* Reviews List (2-3 shown initially, View More button) */}
         <div className="space-y-4 pt-2">
           {reviews.length > 0 ? (
-            reviews.map((rev) => (
-              <div key={rev.id} className="p-4 rounded-2xl border border-slate-100 bg-slate-50/50 space-y-2">
-                <div className="flex items-center justify-between">
-                  <div className="flex items-center gap-2">
-                    <div className="flex items-center gap-1 bg-emerald-600 text-white text-[10px] font-bold px-1.5 py-0.5 rounded">
-                      <span>{rev.rating}</span>
-                      <Star className="w-3 h-3 fill-white" />
+            <>
+              {(showAllReviews ? reviews : reviews.slice(0, 3)).map((rev) => (
+                <div key={rev.id} className="p-4 rounded-2xl border border-slate-100 bg-slate-50/50 space-y-2">
+                  <div className="flex items-center justify-between">
+                    <div className="flex items-center gap-2">
+                      <div className="flex items-center gap-1 bg-emerald-600 text-white text-[10px] font-bold px-1.5 py-0.5 rounded">
+                        <span>{rev.rating}</span>
+                        <Star className="w-3 h-3 fill-white" />
+                      </div>
+                      <span className="text-xs font-bold text-slate-900">{rev.title || 'Verified Rating'}</span>
                     </div>
-                    <span className="text-xs font-bold text-slate-900">{rev.title}</span>
-                  </div>
-                  <span className="text-[11px] text-slate-400">
-                    {new Date(rev.createdAt).toLocaleDateString()}
-                  </span>
-                </div>
-                <p className="text-xs text-slate-600 leading-relaxed">{rev.comment}</p>
-                <div className="flex items-center gap-2 text-[11px] text-slate-400">
-                  <span className="font-semibold text-slate-700">{rev.userName}</span>
-                  {rev.isVerifiedPurchase && (
-                    <span className="flex items-center gap-0.5 text-emerald-600 font-medium">
-                      <Check className="w-3 h-3" /> Certified Buyer
+                    <span className="text-[11px] text-slate-400">
+                      {new Date(rev.createdAt).toLocaleDateString()}
                     </span>
+                  </div>
+                  {rev.comment && <p className="text-xs text-slate-600 leading-relaxed">{rev.comment}</p>}
+                  
+                  {/* Customer Review Photos */}
+                  {rev.images && rev.images.length > 0 && (
+                    <div className="flex gap-2 pt-1">
+                      {rev.images.map((img, imgIdx) => (
+                        <img
+                          key={imgIdx}
+                          src={img}
+                          alt="Customer uploaded review"
+                          className="w-16 h-16 object-cover rounded-xl border border-slate-200 shadow-xs cursor-pointer hover:scale-105 transition-transform"
+                          onClick={() => window.open(img, '_blank')}
+                        />
+                      ))}
+                    </div>
                   )}
+
+                  <div className="flex items-center gap-2 text-[11px] text-slate-400">
+                    <span className="font-semibold text-slate-700">{rev.userName}</span>
+                    {rev.isVerifiedPurchase && (
+                      <span className="flex items-center gap-0.5 text-emerald-600 font-medium">
+                        <Check className="w-3 h-3" /> Certified Buyer
+                      </span>
+                    )}
+                  </div>
                 </div>
-              </div>
-            ))
+              ))}
+
+              {reviews.length > 3 && (
+                <div className="pt-2 text-center">
+                  <button
+                    onClick={() => setShowAllReviews(!showAllReviews)}
+                    className="px-6 py-2.5 bg-slate-100 hover:bg-slate-200 text-slate-800 text-xs font-bold rounded-xl transition-all cursor-pointer shadow-xs"
+                  >
+                    {showAllReviews
+                      ? 'Show Fewer Reviews ↑'
+                      : `View All (${reviews.length}) Customer Reviews & Photos ↓`}
+                  </button>
+                </div>
+              )}
+            </>
           ) : (
             <p className="text-xs text-slate-500 py-4 text-center">
               No written reviews yet. Be the first to share your thoughts on this product!
@@ -612,7 +676,7 @@ export const ProductDetailPage: React.FC<ProductDetailPageProps> = ({
         </div>
       </div>
 
-      {/* Review Modal */}
+      {/* Review Modal with Optional Description and Image Upload from File */}
       {showReviewModal && (
         <div className="fixed inset-0 z-50 bg-black/50 backdrop-blur-xs flex items-center justify-center p-4">
           <div className="bg-white rounded-3xl max-w-lg w-full p-6 shadow-2xl border border-slate-200 animate-in zoom-in-95 duration-150">
@@ -621,14 +685,14 @@ export const ProductDetailPage: React.FC<ProductDetailPageProps> = ({
 
             <form onSubmit={handleReviewSubmit} className="space-y-4">
               <div>
-                <label className="text-xs font-bold text-slate-700 block mb-1">Your Rating</label>
+                <label className="text-xs font-bold text-slate-700 block mb-1">Your Rating *</label>
                 <div className="flex items-center gap-2">
                   {[1, 2, 3, 4, 5].map((num) => (
                     <button
                       type="button"
                       key={num}
                       onClick={() => setReviewRating(num)}
-                      className="p-1 hover:scale-110 transition-transform"
+                      className="p-1 hover:scale-110 transition-transform cursor-pointer"
                     >
                       <Star
                         className={`w-6 h-6 ${
@@ -644,10 +708,9 @@ export const ProductDetailPage: React.FC<ProductDetailPageProps> = ({
               </div>
 
               <div>
-                <label className="text-xs font-bold text-slate-700 block mb-1">Review Headline</label>
+                <label className="text-xs font-bold text-slate-700 block mb-1">Review Headline (Optional)</label>
                 <input
                   type="text"
-                  required
                   value={reviewTitle}
                   onChange={(e) => setReviewTitle(e.target.value)}
                   placeholder="e.g. Superb sound quality & battery!"
@@ -656,10 +719,9 @@ export const ProductDetailPage: React.FC<ProductDetailPageProps> = ({
               </div>
 
               <div>
-                <label className="text-xs font-bold text-slate-700 block mb-1">Detailed Feedback</label>
+                <label className="text-xs font-bold text-slate-700 block mb-1">Detailed Feedback (Optional)</label>
                 <textarea
-                  required
-                  rows={4}
+                  rows={3}
                   value={reviewComment}
                   onChange={(e) => setReviewComment(e.target.value)}
                   placeholder="Tell other shoppers what you liked or disliked about this product..."
@@ -667,18 +729,43 @@ export const ProductDetailPage: React.FC<ProductDetailPageProps> = ({
                 />
               </div>
 
+              {/* Upload Review Photo from File (Optional) */}
+              <div>
+                <label className="text-xs font-bold text-slate-700 block mb-1">
+                  Upload Product Photo (Optional)
+                </label>
+                <input
+                  type="file"
+                  accept="image/*"
+                  onChange={handleReviewImageFile}
+                  className="w-full text-xs text-slate-500 file:mr-2 file:py-1.5 file:px-3 file:rounded-xl file:border-0 file:text-xs file:font-bold file:bg-indigo-50 file:text-indigo-700 hover:file:bg-indigo-100 cursor-pointer"
+                />
+                {reviewImages.length > 0 && (
+                  <div className="flex gap-2 mt-2">
+                    {reviewImages.map((img, i) => (
+                      <img
+                        key={i}
+                        src={img}
+                        alt="Review Attachment"
+                        className="w-14 h-14 object-cover rounded-xl border border-slate-200"
+                      />
+                    ))}
+                  </div>
+                )}
+              </div>
+
               <div className="flex gap-3 justify-end pt-2">
                 <button
                   type="button"
                   onClick={() => setShowReviewModal(false)}
-                  className="px-4 py-2 text-xs font-bold text-slate-600 bg-slate-100 rounded-xl"
+                  className="px-4 py-2 text-xs font-bold text-slate-600 bg-slate-100 rounded-xl cursor-pointer"
                 >
                   Cancel
                 </button>
                 <button
                   type="submit"
                   disabled={reviewSubmitting}
-                  className="px-6 py-2 text-xs font-bold text-white bg-indigo-600 hover:bg-indigo-700 rounded-xl shadow-md disabled:opacity-50"
+                  className="px-6 py-2 text-xs font-bold text-white bg-indigo-600 hover:bg-indigo-700 rounded-xl shadow-md disabled:opacity-50 cursor-pointer"
                 >
                   {reviewSubmitting ? 'Posting...' : 'Submit Review'}
                 </button>

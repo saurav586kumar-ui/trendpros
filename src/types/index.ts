@@ -5,6 +5,7 @@ export interface Product {
   slug: string;
   brand: string;
   category: string;
+  categories?: string[]; // Multiple categories support
   subCategory?: string;
   description: string;
   highlights: string[];
@@ -22,7 +23,8 @@ export interface Product {
   isGiftVoucher?: boolean;
   giftCardDenominations?: number[];
   variants?: {
-    type: 'color' | 'size' | 'storage' | 'denomination';
+    name?: string;
+    type?: string;
     options: string[];
   }[];
   specs?: Record<string, string>;
@@ -208,10 +210,27 @@ export interface Review {
   userName: string;
   userPhoto?: string;
   rating: number;
-  title: string;
-  comment: string;
+  title?: string;
+  comment?: string;
+  images?: string[];
   isVerifiedPurchase: boolean;
   createdAt: string;
+}
+
+export interface StoreConfig {
+  storeName: string;
+  websiteUrl: string; // trendpro.netlify.app
+  dispatchHub: {
+    name: string;
+    hubCode: string;
+    address: string;
+    city: string;
+    district: string;
+    state: string;
+    pincode: string;
+    phone: string;
+  };
+  defaultDeliveryDays: number; // 8
 }
 
 export interface SupportMessage {

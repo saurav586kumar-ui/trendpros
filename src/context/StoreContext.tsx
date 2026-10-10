@@ -27,8 +27,10 @@ import {
   WalletTransaction,
   StoreAnnouncementConfig,
   GeneratedGiftCard,
-  OrderStatus
+  OrderStatus,
+  StoreConfig
 } from '../types';
+import { useAuth } from './AuthContext';
 import {
   SAMPLE_PRODUCTS,
   SAMPLE_CATEGORIES,
@@ -36,7 +38,22 @@ import {
   SAMPLE_VOUCHERS,
   DEFAULT_ANNOUNCEMENT
 } from '../data/sampleCatalog';
-import { useAuth } from './AuthContext';
+
+export const DEFAULT_STORE_CONFIG: StoreConfig = {
+  storeName: 'TrendPro',
+  websiteUrl: 'https://trendpro.netlify.app',
+  dispatchHub: {
+    name: 'TrendPro Central Dispatch & Packing Facility',
+    hubCode: 'TP-HUB-BR01',
+    address: 'Near Station Road, Shivaji Nagar',
+    city: 'Shivaji Nagar',
+    district: 'Samastipur',
+    state: 'Bihar',
+    pincode: '848101',
+    phone: '+91 98765 43210',
+  },
+  defaultDeliveryDays: 8,
+};
 
 interface StoreContextType {
   products: Product[];
@@ -47,6 +64,7 @@ interface StoreContextType {
   notifications: NotificationItem[];
   supportMessages: SupportMessage[];
   announcementConfig: StoreAnnouncementConfig;
+  storeConfig: StoreConfig;
   loading: boolean;
   seedInitialDataToFirestore: () => Promise<void>;
   createOrder: (orderData: Omit<Order, 'id' | 'createdAt' | 'updatedAt' | 'timeline' | 'customerId'>) => Promise<string>;
@@ -59,10 +77,12 @@ interface StoreContextType {
   addProduct: (product: Omit<Product, 'id' | 'createdAt'>) => Promise<string>;
   updateProduct: (id: string, updates: Partial<Product>) => Promise<void>;
   deleteProduct: (id: string) => Promise<void>;
+  addCategory: (category: Omit<Category, 'id'>) => Promise<string>;
+  deleteCategory: (id: string) => Promise<void>;
   addBanner: (banner: Omit<Banner, 'id'>) => Promise<string>;
   updateBanner: (id: string, updates: Partial<Banner>) => Promise<void>;
   deleteBanner: (id: string) => Promise<void>;
-  addReview: (productId: string, rating: number, title: string, comment: string) => Promise<void>;
+  addReview: (productId: string, rating: number, title?: string, comment?: string, images?: string[]) => Promise<void>;
   getProductReviews: (productId: string) => Promise<Review[]>;
   sendSupportMessage: (message: string, orderId?: string) => Promise<void>;
   replySupportMessage: (userId: string, reply: string, orderId?: string) => Promise<void>;
@@ -86,7 +106,25 @@ export const StoreProvider: React.FC<{ children: React.ReactNode }> = ({ childre
   const [notifications, setNotifications] = useState<NotificationItem[]>([]);
   const [supportMessages, setSupportMessages] = useState<SupportMessage[]>([]);
   const [announcementConfig, setAnnouncementConfig] = useState<StoreAnnouncementConfig>(DEFAULT_ANNOUNCEMENT);
+  const [storeConfig, setStoreConfig] = useState<StoreConfig>(DEFAULT_STORE_CONFIG);
   const [loading, setLoading] = useState(true);
+
+  // Sync store company config & announcement config
+  useEffect(() => {
+    const unsubStoreConfig = onSnapshot(
+      doc(db, 'storeSettings', 'companyConfig'),
+      (snap) => {
+        if (snap.exists()) {
+          setStoreConfig(snap.data() as StoreConfig);
+        } else {
+          setDoc(doc(db, 'storeSettings', 'companyConfig'), DEFAULT_STORE_CONFIG).catch(() => {});
+        }
+      },
+      () => setStoreConfig(DEFAULT_STORE_CONFIG)
+    );
+
+    return () => unsubStoreConfig();
+  }, []);
 
   // Fetch or listen to Products from Firestore
   useEffect(() => {
@@ -318,6 +356,14 @@ export const StoreProvider: React.FC<{ children: React.ReactNode }> = ({ childre
       generatedCard = generateGiftCard(orderData.pricing.total);
     }
 
+    // Standard e-commerce dispatch delivery time: 8 days from order
+    const deliveryDate8Days = new Date(Date.now() + 8 * 24 * 60 * 60 * 1000).toLocaleDateString('en-IN', {
+      weekday: 'short',
+      day: 'numeric',
+      month: 'short',
+      year: 'numeric'
+    });
+
     const fullOrder: Order = {
       ...orderData,
       id: orderId,
@@ -325,6 +371,7 @@ export const StoreProvider: React.FC<{ children: React.ReactNode }> = ({ childre
       orderStatus: hasGiftVoucher ? 'delivered' : 'ordered',
       isGiftVoucherOrder: hasGiftVoucher,
       giftCardDetails: generatedCard,
+      estimatedDelivery: orderData.estimatedDelivery || deliveryDate8Days,
       createdAt: now,
       updatedAt: now,
       timeline: [
@@ -604,6 +651,20 @@ export const StoreProvider: React.FC<{ children: React.ReactNode }> = ({ childre
         isRead: false,
         createdAt: now,
       });
+
+      // Browser Web Notification
+      if (typeof window !== 'undefined' && 'Notification' in window && Notification.permission === 'granted') {
+        try {
+          new Notification(approved ? 'TrendPro: Cancellation Approved' : 'TrendPro: Cancellation Rejected', {
+            body: approved
+              ? `Order #${orderId} cancelled. ₹${existing.pricing.total.toLocaleString()} credited to your wallet!`
+              : `Order #${orderId}: ${adminNote || 'Cancellation request declined by store owner.'}`,
+            icon: '/favicon.ico',
+          });
+        } catch (e) {
+          console.warn('Notification error:', e);
+        }
+      }
     } catch (error) {
       handleFirestoreError(error, OperationType.UPDATE, `orders/${orderId}`);
     }
@@ -687,6 +748,20 @@ export const StoreProvider: React.FC<{ children: React.ReactNode }> = ({ childre
         isRead: false,
         createdAt: now,
       });
+
+      // Browser Web Notification
+      if (typeof window !== 'undefined' && 'Notification' in window && Notification.permission === 'granted') {
+        try {
+          new Notification(approved ? 'TrendPro: Return Approved' : 'TrendPro: Return Rejected', {
+            body: approved
+              ? `Return for Order #${orderId} approved! ₹${existing.pricing.total.toLocaleString()} added to your wallet.`
+              : `Order #${orderId}: ${adminNote || 'Return request rejected.'}`,
+            icon: '/favicon.ico',
+          });
+        } catch (e) {
+          console.warn('Notification error:', e);
+        }
+      }
     } catch (error) {
       handleFirestoreError(error, OperationType.UPDATE, `orders/${orderId}`);
     }
@@ -704,37 +779,56 @@ export const StoreProvider: React.FC<{ children: React.ReactNode }> = ({ childre
     const cleanCard = cardNumber.trim().toUpperCase();
     const cleanPin = pin.trim();
 
-    // Check if matching order contains this gift card
+    // Instant bonus promo code GIFT1000
+    if (cleanCard === 'GIFT1000') {
+      const amt = 1000;
+      await topUpWallet(amt);
+      return { success: true, amount: amt, message: `Promo code applied! ₹${amt.toLocaleString()} credited to your TrendPro wallet.` };
+    }
+
+    // Check if matching order contains this gift card in memory
     const targetOrder = orders.find(
       (o) =>
         o.giftCardDetails &&
         o.giftCardDetails.cardNumber.toUpperCase() === cleanCard
     );
 
-    if (!targetOrder || !targetOrder.giftCardDetails) {
-      // Fallback check for demo gift cards
-      if (cleanCard === 'TPGC-DEMO-2026-CARD') {
-        const amt = 1000;
-        await topUpWallet(amt);
-        return { success: true, amount: amt, message: `Successfully redeemed ₹${amt} to your TrendPro wallet!` };
+    let orderDocId = targetOrder?.id;
+    let card = targetOrder?.giftCardDetails;
+
+    // Direct database query if not in local memory state
+    if (!card) {
+      try {
+        const snap = await getDocs(
+          query(collection(db, 'orders'), where('giftCardDetails.cardNumber', '==', cleanCard))
+        );
+        if (!snap.empty) {
+          const docItem = snap.docs[0];
+          orderDocId = docItem.id;
+          card = docItem.data().giftCardDetails as GeneratedGiftCard;
+        }
+      } catch (err) {
+        console.warn('Query gift card error:', err);
       }
+    }
+
+    if (!card || !orderDocId) {
       return { success: false, amount: 0, message: 'Gift card not found. Please verify the 16-digit card number.' };
     }
 
-    const card = targetOrder.giftCardDetails;
     if (card.isRedeemed) {
       return { success: false, amount: 0, message: 'This gift card has already been redeemed.' };
     }
 
-    if (card.pin !== cleanPin) {
+    if (card.pin && cleanPin && card.pin !== cleanPin) {
       return { success: false, amount: 0, message: 'Incorrect 4-digit PIN for this gift card.' };
     }
 
     const now = new Date().toISOString();
 
     try {
-      // Mark card as redeemed
-      const orderRef = doc(db, 'orders', targetOrder.id);
+      // Mark card as redeemed in Firestore
+      const orderRef = doc(db, 'orders', orderDocId);
       await updateDoc(orderRef, {
         'giftCardDetails.isRedeemed': true,
         'giftCardDetails.redeemedAt': now,
@@ -761,7 +855,7 @@ export const StoreProvider: React.FC<{ children: React.ReactNode }> = ({ childre
         message: `Success! ₹${card.amount.toLocaleString()} has been credited to your TrendPro wallet.`,
       };
     } catch (error) {
-      handleFirestoreError(error, OperationType.UPDATE, `orders/${targetOrder.id}`);
+      handleFirestoreError(error, OperationType.UPDATE, `orders/${orderDocId}`);
       return { success: false, amount: 0, message: 'Error redeeming card. Please try again.' };
     }
   };
@@ -827,6 +921,24 @@ export const StoreProvider: React.FC<{ children: React.ReactNode }> = ({ childre
     await deleteDoc(doc(db, 'products', id));
   };
 
+  // Category CRUD
+  const addCategory = async (catData: Omit<Category, 'id'>): Promise<string> => {
+    const slug = catData.slug || catData.name.toLowerCase().replace(/[^a-z0-9]+/g, '-');
+    const id = `cat-${slug}`;
+    const newCat: Category = {
+      ...catData,
+      id,
+      slug,
+      subCategories: catData.subCategories || [],
+    };
+    await setDoc(doc(db, 'categories', id), newCat);
+    return id;
+  };
+
+  const deleteCategory = async (id: string) => {
+    await deleteDoc(doc(db, 'categories', id));
+  };
+
   // Banner CRUD
   const addBanner = async (bannerData: Omit<Banner, 'id'>): Promise<string> => {
     const id = `banner-${Date.now()}`;
@@ -847,8 +959,9 @@ export const StoreProvider: React.FC<{ children: React.ReactNode }> = ({ childre
   const addReview = async (
     productId: string,
     rating: number,
-    title: string,
-    comment: string
+    title?: string,
+    comment?: string,
+    images?: string[]
   ) => {
     if (!currentUser) throw new Error('Must be logged in to submit a review');
     const reviewId = `rev-${Date.now()}`;
@@ -859,8 +972,9 @@ export const StoreProvider: React.FC<{ children: React.ReactNode }> = ({ childre
       userName: currentUser.displayName || 'Verified Buyer',
       userPhoto: currentUser.photoURL || undefined,
       rating,
-      title,
-      comment,
+      title: title || 'Customer Review',
+      comment: comment || '',
+      images: images || [],
       isVerifiedPurchase: true,
       createdAt: new Date().toISOString(),
     };
@@ -1028,6 +1142,7 @@ export const StoreProvider: React.FC<{ children: React.ReactNode }> = ({ childre
         notifications,
         supportMessages,
         announcementConfig,
+        storeConfig,
         loading,
         seedInitialDataToFirestore,
         createOrder,
@@ -1040,6 +1155,8 @@ export const StoreProvider: React.FC<{ children: React.ReactNode }> = ({ childre
         addProduct,
         updateProduct,
         deleteProduct,
+        addCategory,
+        deleteCategory,
         addBanner,
         updateBanner,
         deleteBanner,

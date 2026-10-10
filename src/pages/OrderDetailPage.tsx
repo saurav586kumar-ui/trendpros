@@ -53,6 +53,9 @@ export const OrderDetailPage: React.FC<OrderDetailPageProps> = ({
   const [returnImages, setReturnImages] = useState<string[]>([]);
   const [submittingReturn, setSubmittingReturn] = useState(false);
 
+  // Invoice Modal State
+  const [showInvoiceModal, setShowInvoiceModal] = useState(false);
+
   // Gift Card Redeem State
   const [redeemingCard, setRedeemingCard] = useState(false);
   const [redeemResult, setRedeemResult] = useState<string>('');
@@ -180,11 +183,11 @@ export const OrderDetailPage: React.FC<OrderDetailPageProps> = ({
           </button>
 
           <button
-            onClick={() => window.print()}
-            className="flex items-center gap-1.5 px-3.5 py-2 text-xs font-bold text-slate-700 bg-slate-100 hover:bg-slate-200 rounded-xl transition-colors"
+            onClick={() => setShowInvoiceModal(true)}
+            className="flex items-center gap-1.5 px-3.5 py-2 text-xs font-bold text-slate-700 bg-slate-100 hover:bg-slate-200 rounded-xl transition-colors cursor-pointer"
           >
             <Printer className="w-4 h-4" />
-            <span>Invoice</span>
+            <span>Invoice & Status Bill</span>
           </button>
 
           {canRequestCancel && (
@@ -626,6 +629,131 @@ export const OrderDetailPage: React.FC<OrderDetailPageProps> = ({
                 </button>
               </div>
             </form>
+          </div>
+        </div>
+      )}
+      {/* Customer Official Tax Invoice & Status Modal */}
+      {showInvoiceModal && (
+        <div className="fixed inset-0 z-50 bg-black/60 backdrop-blur-xs flex items-center justify-center p-2 sm:p-4 overflow-y-auto">
+          <div className="bg-white rounded-3xl max-w-3xl w-full p-6 shadow-2xl border border-slate-200 max-h-[92vh] flex flex-col">
+            <div className="flex justify-between items-center pb-4 border-b border-slate-200 print:hidden shrink-0">
+              <h3 className="text-base font-bold text-slate-900 flex items-center gap-2">
+                <Printer className="w-5 h-5 text-indigo-600" />
+                <span>Official Tax Invoice & Live Status</span>
+              </h3>
+              <div className="flex items-center gap-2">
+                <button
+                  onClick={() => window.print()}
+                  className="bg-indigo-600 hover:bg-indigo-700 text-white text-xs font-bold px-4 py-2 rounded-xl shadow-md flex items-center gap-1.5 cursor-pointer active:scale-95"
+                >
+                  <Printer className="w-4 h-4" />
+                  <span>Print Invoice (PDF)</span>
+                </button>
+                <button
+                  onClick={() => setShowInvoiceModal(false)}
+                  className="p-2 text-slate-400 hover:text-slate-700 rounded-xl cursor-pointer"
+                >
+                  <XCircle className="w-5 h-5" />
+                </button>
+              </div>
+            </div>
+
+            <div className="overflow-y-auto p-2 sm:p-4 space-y-6 print:p-0">
+              {/* Invoice Printable Sheet */}
+              <div className="p-6 bg-white border border-slate-200 rounded-2xl print:border-none print:p-0 space-y-5">
+                <div className="flex justify-between items-start border-b-2 border-slate-900 pb-4">
+                  <div>
+                    <h1 className="text-2xl font-black text-slate-900 uppercase tracking-tight">TRENDPRO</h1>
+                    <p className="text-xs text-slate-600 font-bold">Tax Invoice & Delivery Receipt</p>
+                    <p className="text-[11px] text-slate-500 mt-1">
+                      <strong>Dispatched From:</strong> TrendPro Central Facility, Near Station Road, Shivaji Nagar, Samastipur, Bihar - 848101
+                    </p>
+                    <p className="text-[10px] text-slate-400">Website: trendpro.netlify.app</p>
+                  </div>
+                  <div className="text-right">
+                    <p className="font-mono font-black text-sm text-slate-900">ORDER #{order.id}</p>
+                    <p className="text-[11px] text-slate-500">{new Date(order.createdAt).toLocaleString()}</p>
+                    <span className="inline-block mt-1 px-3 py-0.5 rounded-full text-xs font-black uppercase bg-emerald-100 text-emerald-800 border border-emerald-300">
+                      Live Status: {order.orderStatus}
+                    </span>
+                  </div>
+                </div>
+
+                <div className="grid grid-cols-2 gap-4 bg-slate-50 p-4 rounded-xl text-xs">
+                  <div>
+                    <span className="text-[10px] font-bold text-slate-400 uppercase tracking-wider block">Customer Destination:</span>
+                    <p className="font-black text-slate-900 text-sm mt-0.5">{order.shippingAddress.name}</p>
+                    <p className="text-slate-600 mt-0.5">Phone: <strong>{order.shippingAddress.phone}</strong></p>
+                    <p className="text-slate-600">{order.shippingAddress.addressLine}, {order.shippingAddress.locality}</p>
+                    <p className="text-slate-800 font-bold">{order.shippingAddress.city}, {order.shippingAddress.state} - {order.shippingAddress.pincode}</p>
+                    <p className="text-[10px] text-slate-400 mt-1">Customer ID: {order.customerId}</p>
+                  </div>
+                  <div>
+                    <span className="text-[10px] font-bold text-slate-400 uppercase tracking-wider block">Shipment & Payment Info:</span>
+                    <p className="text-slate-700 mt-0.5">Payment Mode: <strong className="uppercase">{order.paymentMethod}</strong> ({order.paymentStatus})</p>
+                    <p className="text-slate-700">Estimated Delivery: <strong>{order.estimatedDelivery || '8 Days from Order Date'}</strong></p>
+                    <p className="text-slate-700">Dispatch Location: <strong>Shivaji Nagar, Samastipur, Bihar</strong></p>
+                  </div>
+                </div>
+
+                <table className="w-full text-xs text-left border border-slate-200">
+                  <thead className="bg-slate-100 text-slate-700 font-bold border-b border-slate-200">
+                    <tr>
+                      <th className="p-2.5">Item Description</th>
+                      <th className="p-2.5">Size / Variant</th>
+                      <th className="p-2.5 text-center">Qty</th>
+                      <th className="p-2.5 text-right">Unit Price</th>
+                      <th className="p-2.5 text-right">Amount</th>
+                    </tr>
+                  </thead>
+                  <tbody className="divide-y divide-slate-100">
+                    {order.items.map((it, idx) => (
+                      <tr key={idx}>
+                        <td className="p-2.5 font-bold text-slate-900">
+                          {it.name}
+                          <span className="block text-[10px] text-slate-400 font-normal">{it.brand}</span>
+                        </td>
+                        <td className="p-2.5 text-indigo-700 font-bold">{it.variant || 'Standard'}</td>
+                        <td className="p-2.5 text-center font-bold text-slate-900">{it.quantity}</td>
+                        <td className="p-2.5 text-right text-slate-600">₹{it.price.toLocaleString()}</td>
+                        <td className="p-2.5 text-right font-black text-slate-900">
+                          ₹{(it.price * it.quantity).toLocaleString()}
+                        </td>
+                      </tr>
+                    ))}
+                  </tbody>
+                  <tfoot className="bg-slate-50 border-t border-slate-200 font-bold">
+                    <tr>
+                      <td colSpan={4} className="p-2 text-right text-slate-600">Subtotal:</td>
+                      <td className="p-2 text-right text-slate-900">₹{order.pricing.subtotal.toLocaleString()}</td>
+                    </tr>
+                    {order.pricing.voucherDiscount > 0 && (
+                      <tr>
+                        <td colSpan={4} className="p-2 text-right text-emerald-600">
+                          Discount ({order.pricing.voucherCode}):
+                        </td>
+                        <td className="p-2 text-right text-emerald-600">- ₹{order.pricing.voucherDiscount.toLocaleString()}</td>
+                      </tr>
+                    )}
+                    {order.pricing.walletUsed > 0 && (
+                      <tr>
+                        <td colSpan={4} className="p-2 text-right text-indigo-600">TrendPro Wallet Credits:</td>
+                        <td className="p-2 text-right text-indigo-600">- ₹{order.pricing.walletUsed.toLocaleString()}</td>
+                      </tr>
+                    )}
+                    <tr className="border-t border-slate-300">
+                      <td colSpan={4} className="p-2 text-right text-slate-900 text-sm">Total Paid:</td>
+                      <td className="p-2 text-right text-slate-900 text-base font-black">₹{order.pricing.total.toLocaleString()}</td>
+                    </tr>
+                  </tfoot>
+                </table>
+
+                <div className="pt-3 border-t border-slate-200 flex justify-between items-center text-[10px] text-slate-500">
+                  <span>Thank you for shopping on TrendPro! • Dispatch Samastipur Bihar</span>
+                  <span>Computer Generated Tax Invoice</span>
+                </div>
+              </div>
+            </div>
           </div>
         </div>
       )}
