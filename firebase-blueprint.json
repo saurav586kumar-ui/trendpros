@@ -1,0 +1,118 @@
+{
+  "entities": {
+    "Product": {
+      "title": "Product",
+      "description": "Marketplace product item",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string" },
+        "name": { "type": "string" },
+        "slug": { "type": "string" },
+        "brand": { "type": "string" },
+        "category": { "type": "string" },
+        "subCategory": { "type": "string" },
+        "description": { "type": "string" },
+        "mainImage": { "type": "string" },
+        "originalPrice": { "type": "number" },
+        "sellingPrice": { "type": "number" },
+        "stock": { "type": "number" },
+        "rating": { "type": "number" },
+        "ratingCount": { "type": "number" },
+        "isActive": { "type": "boolean" },
+        "createdAt": { "type": "string" }
+      },
+      "required": ["id", "name", "category", "sellingPrice", "stock"]
+    },
+    "Category": {
+      "title": "Category",
+      "description": "Product category definition",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string" },
+        "name": { "type": "string" },
+        "slug": { "type": "string" },
+        "icon": { "type": "string" }
+      },
+      "required": ["id", "name", "slug"]
+    },
+    "Banner": {
+      "title": "Banner",
+      "description": "Homepage promotional banner",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string" },
+        "title": { "type": "string" },
+        "subtitle": { "type": "string" },
+        "imageUrl": { "type": "string" },
+        "link": { "type": "string" },
+        "isActive": { "type": "boolean" }
+      },
+      "required": ["id", "title", "imageUrl"]
+    },
+    "User": {
+      "title": "User",
+      "description": "User customer profile",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string" },
+        "email": { "type": "string" },
+        "displayName": { "type": "string" },
+        "role": { "type": "string" }
+      },
+      "required": ["id", "email"]
+    },
+    "Order": {
+      "title": "Order",
+      "description": "Customer purchase order",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string" },
+        "userId": { "type": "string" },
+        "customerEmail": { "type": "string" },
+        "orderStatus": { "type": "string" },
+        "paymentStatus": { "type": "string" },
+        "createdAt": { "type": "string" }
+      },
+      "required": ["id", "userId", "orderStatus", "paymentStatus"]
+    },
+    "Review": {
+      "title": "Review",
+      "description": "Product review by customer",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string" },
+        "productId": { "type": "string" },
+        "userId": { "type": "string" },
+        "rating": { "type": "number" },
+        "comment": { "type": "string" }
+      },
+      "required": ["id", "productId", "userId", "rating"]
+    }
+  },
+  "firestore": {
+    "/products/{productId}": {
+      "schema": "Product",
+      "description": "Public catalog products"
+    },
+    "/categories/{categoryId}": {
+      "schema": "Category",
+      "description": "Product catalog categories"
+    },
+    "/banners/{bannerId}": {
+      "schema": "Banner",
+      "description": "Marketplace banner carousels"
+    },
+    "/users/{userId}": {
+      "schema": "User",
+      "description": "Customer account details"
+    },
+    "/orders/{orderId}": {
+      "schema": "Order",
+      "description": "Store customer orders"
+    },
+    "/reviews/{reviewId}": {
+      "schema": "Review",
+      "description": "Product customer reviews"
+    }
+  }
+}

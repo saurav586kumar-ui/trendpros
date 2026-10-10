@@ -1,0 +1,6 @@
+{
+  "name": "TrendPro — Premium Online Marketplace",
+  "description": "TrendPro is a scalable, production-grade e-commerce marketplace featuring authentic catalog browsing, real-time cart, secure checkout, orders, wallet & vouchers, and owner dashboard.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}
