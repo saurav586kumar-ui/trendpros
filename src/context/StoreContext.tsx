@@ -324,6 +324,22 @@ export const StoreProvider: React.FC<{ children: React.ReactNode }> = ({ childre
     }
   };
 
+  // Helper to remove any undefined fields recursively for Firestore safety
+  const sanitizeForFirestore = <T,>(obj: T): T => {
+    if (obj === undefined) return null as unknown as T;
+    if (obj === null || typeof obj !== 'object') return obj;
+    if (Array.isArray(obj)) {
+      return obj.map((item) => sanitizeForFirestore(item)) as unknown as T;
+    }
+    const cleaned: Record<string, any> = {};
+    for (const [key, value] of Object.entries(obj as Record<string, any>)) {
+      if (value !== undefined) {
+        cleaned[key] = sanitizeForFirestore(value);
+      }
+    }
+    return cleaned as T;
+  };
+
   // Helper to generate a random 16-digit card number and 4-digit PIN
   const generateGiftCard = (amount: number): GeneratedGiftCard => {
     const chunk = () => Math.floor(1000 + Math.random() * 9000).toString();
@@ -350,7 +366,7 @@ export const StoreProvider: React.FC<{ children: React.ReactNode }> = ({ childre
 
     // Check if order has a gift voucher
     const hasGiftVoucher = orderData.items.some((i) => i.isGiftVoucher || i.productId.includes('gift'));
-    let generatedCard: GeneratedGiftCard | undefined = undefined;
+    let generatedCard: GeneratedGiftCard | null = null;
 
     if (hasGiftVoucher) {
       generatedCard = generateGiftCard(orderData.pricing.total);
@@ -364,13 +380,13 @@ export const StoreProvider: React.FC<{ children: React.ReactNode }> = ({ childre
       year: 'numeric'
     });
 
-    const fullOrder: Order = {
+    const rawOrder: Order = {
       ...orderData,
       id: orderId,
       customerId: custId,
       orderStatus: hasGiftVoucher ? 'delivered' : 'ordered',
       isGiftVoucherOrder: hasGiftVoucher,
-      giftCardDetails: generatedCard,
+      giftCardDetails: generatedCard || undefined,
       estimatedDelivery: orderData.estimatedDelivery || deliveryDate8Days,
       createdAt: now,
       updatedAt: now,
@@ -384,6 +400,9 @@ export const StoreProvider: React.FC<{ children: React.ReactNode }> = ({ childre
         },
       ],
     };
+
+    // Sanitize order document: recursively strip any undefined values so Firestore never rejects it
+    const fullOrder = sanitizeForFirestore(rawOrder);
 
     try {
       await runTransaction(db, async (transaction) => {
@@ -906,15 +925,16 @@ export const StoreProvider: React.FC<{ children: React.ReactNode }> = ({ childre
       id,
       createdAt: new Date().toISOString(),
     };
-    await setDoc(doc(db, 'products', id), newProduct);
+    await setDoc(doc(db, 'products', id), sanitizeForFirestore(newProduct));
     return id;
   };
 
   const updateProduct = async (id: string, updates: Partial<Product>) => {
-    await updateDoc(doc(db, 'products', id), {
+    const sanitized = sanitizeForFirestore({
       ...updates,
       updatedAt: new Date().toISOString(),
     });
+    await updateDoc(doc(db, 'products', id), sanitized);
   };
 
   const deleteProduct = async (id: string) => {
@@ -931,7 +951,7 @@ export const StoreProvider: React.FC<{ children: React.ReactNode }> = ({ childre
       slug,
       subCategories: catData.subCategories || [],
     };
-    await setDoc(doc(db, 'categories', id), newCat);
+    await setDoc(doc(db, 'categories', id), sanitizeForFirestore(newCat));
     return id;
   };
 
@@ -943,12 +963,12 @@ export const StoreProvider: React.FC<{ children: React.ReactNode }> = ({ childre
   const addBanner = async (bannerData: Omit<Banner, 'id'>): Promise<string> => {
     const id = `banner-${Date.now()}`;
     const newBanner: Banner = { ...bannerData, id };
-    await setDoc(doc(db, 'banners', id), newBanner);
+    await setDoc(doc(db, 'banners', id), sanitizeForFirestore(newBanner));
     return id;
   };
 
   const updateBanner = async (id: string, updates: Partial<Banner>) => {
-    await updateDoc(doc(db, 'banners', id), updates);
+    await updateDoc(doc(db, 'banners', id), sanitizeForFirestore(updates));
   };
 
   const deleteBanner = async (id: string) => {
@@ -965,7 +985,7 @@ export const StoreProvider: React.FC<{ children: React.ReactNode }> = ({ childre
   ) => {
     if (!currentUser) throw new Error('Must be logged in to submit a review');
     const reviewId = `rev-${Date.now()}`;
-    const review: Review = {
+    const rawReview: Review = {
       id: reviewId,
       productId,
       userId: currentUser.uid,
@@ -978,7 +998,7 @@ export const StoreProvider: React.FC<{ children: React.ReactNode }> = ({ childre
       isVerifiedPurchase: true,
       createdAt: new Date().toISOString(),
     };
-    await setDoc(doc(db, 'reviews', reviewId), review);
+    await setDoc(doc(db, 'reviews', reviewId), sanitizeForFirestore(rawReview));
 
     const prod = products.find((p) => p.id === productId);
     if (prod) {
