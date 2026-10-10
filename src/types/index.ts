@@ -236,6 +236,8 @@ export interface StoreConfig {
 export interface SupportMessage {
   id: string;
   conversationId?: string;
+  customerUid?: string;
+  ownerUid?: string;
   userId: string;
   senderId?: string;
   recipientId?: string;
@@ -255,6 +257,25 @@ export interface SupportMessage {
   isRead: boolean;
   readAt?: string;
   status?: 'sending' | 'sent' | 'failed';
+}
+
+export interface ChatConversation {
+  id: string;
+  conversationId: string;
+  customerUid: string;
+  ownerUid: string;
+  participants: string[];
+  userId: string;
+  customerId: string;
+  customerName: string;
+  customerEmail: string;
+  lastMessage: string;
+  lastMessageAt: string;
+  lastSender: 'customer' | 'owner';
+  orderId?: string;
+  unreadByOwner?: boolean;
+  unreadByCustomer?: boolean;
+  updatedAt: string;
 }
 
 export interface NotificationItem {

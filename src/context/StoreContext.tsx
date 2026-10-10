@@ -23,6 +23,7 @@ import {
   Order,
   Review,
   SupportMessage,
+  ChatConversation,
   NotificationItem,
   WalletTransaction,
   StoreAnnouncementConfig,
@@ -30,7 +31,7 @@ import {
   OrderStatus,
   StoreConfig
 } from '../types';
-import { useAuth, OWNER_EMAIL } from './AuthContext';
+import { useAuth, OWNER_EMAIL, OWNER_UID, getConversationId } from './AuthContext';
 import {
   SAMPLE_PRODUCTS,
   SAMPLE_CATEGORIES,
@@ -63,6 +64,7 @@ interface StoreContextType {
   orders: Order[];
   notifications: NotificationItem[];
   supportMessages: SupportMessage[];
+  chats: ChatConversation[];
   announcementConfig: StoreAnnouncementConfig;
   storeConfig: StoreConfig;
   loading: boolean;
@@ -106,6 +108,7 @@ export const StoreProvider: React.FC<{ children: React.ReactNode }> = ({ childre
   const [orders, setOrders] = useState<Order[]>([]);
   const [notifications, setNotifications] = useState<NotificationItem[]>([]);
   const [supportMessages, setSupportMessages] = useState<SupportMessage[]>([]);
+  const [chats, setChats] = useState<ChatConversation[]>([]);
   const [announcementConfig, setAnnouncementConfig] = useState<StoreAnnouncementConfig>(DEFAULT_ANNOUNCEMENT);
   const [storeConfig, setStoreConfig] = useState<StoreConfig>(DEFAULT_STORE_CONFIG);
   const [loading, setLoading] = useState(true);
@@ -297,10 +300,41 @@ export const StoreProvider: React.FC<{ children: React.ReactNode }> = ({ childre
       }
     );
 
+    // Chats conversations listener (deterministic conversation documents)
+    let chatsQuery;
+    if (isAdmin) {
+      chatsQuery = query(collection(db, 'chats'));
+    } else {
+      chatsQuery = query(
+        collection(db, 'chats'),
+        where('customerUid', '==', currentUser.uid)
+      );
+    }
+
+    const unsubChats = onSnapshot(
+      chatsQuery,
+      (snapshot) => {
+        const chatList = snapshot.docs.map((d) => ({
+          id: d.id,
+          ...d.data(),
+        })) as ChatConversation[];
+        chatList.sort(
+          (a, b) =>
+            new Date(b.updatedAt || b.lastMessageAt || 0).getTime() -
+            new Date(a.updatedAt || a.lastMessageAt || 0).getTime()
+        );
+        setChats(chatList);
+      },
+      (error) => {
+        console.warn('Chats listener notice:', error.message);
+      }
+    );
+
     return () => {
       unsubOrders();
       unsubNotifications();
       unsubSupport();
+      unsubChats();
     };
   }, [currentUser, isAdmin]);
 
@@ -1055,15 +1089,18 @@ export const StoreProvider: React.FC<{ children: React.ReactNode }> = ({ childre
     imageFileName?: string
   ): Promise<string> => {
     if (!currentUser) throw new Error('Sign in to chat with store owner');
-    const custId = userProfile?.customerId || `CUST-${currentUser.uid.slice(-6).toUpperCase()}`;
-    const conversationId = `conv_${currentUser.uid}`;
+    const customerUid = currentUser.uid;
+    const custId = userProfile?.customerId || `CUST-${customerUid.slice(-6).toUpperCase()}`;
+    const conversationId = getConversationId(customerUid, OWNER_UID);
     const now = new Date().toISOString();
 
     const newMsg = sanitizeForFirestore({
       conversationId,
-      userId: currentUser.uid,
-      senderId: currentUser.uid,
-      recipientId: OWNER_EMAIL,
+      customerUid,
+      ownerUid: OWNER_UID,
+      userId: customerUid,
+      senderId: customerUid,
+      recipientId: OWNER_UID,
       senderRole: 'customer' as const,
       sender: 'customer' as const,
       senderName: currentUser.displayName || 'Customer',
@@ -1081,13 +1118,47 @@ export const StoreProvider: React.FC<{ children: React.ReactNode }> = ({ childre
 
     const docRef = await addDoc(collection(db, 'supportMessages'), newMsg);
 
-    // Update conversation metadata
+    // Save and update conversation document in deterministic 'chats' collection
+    try {
+      await setDoc(
+        doc(db, 'chats', conversationId),
+        sanitizeForFirestore({
+          id: conversationId,
+          conversationId,
+          customerUid,
+          ownerUid: OWNER_UID,
+          participants: [customerUid, OWNER_UID],
+          userId: customerUid,
+          customerId: custId,
+          customerName: currentUser.displayName || 'Customer',
+          customerEmail: currentUser.email || '',
+          lastMessage: message.trim() || (imageUrl ? '📷 [Image Attachment]' : 'Message'),
+          lastMessageAt: now,
+          lastSender: 'customer',
+          orderId: orderId || null,
+          unreadByOwner: true,
+          unreadByCustomer: false,
+          updatedAt: now,
+        }),
+        { merge: true }
+      );
+
+      // Mirror to chats subcollection
+      await setDoc(doc(db, 'chats', conversationId, 'messages', docRef.id), newMsg);
+    } catch (e) {
+      console.warn('Chats sync notice:', e);
+    }
+
+    // Also update legacy supportConversations
     try {
       await setDoc(
         doc(db, 'supportConversations', conversationId),
         sanitizeForFirestore({
           id: conversationId,
-          userId: currentUser.uid,
+          conversationId,
+          customerUid,
+          ownerUid: OWNER_UID,
+          userId: customerUid,
           customerId: custId,
           customerName: currentUser.displayName || 'Customer',
           customerEmail: currentUser.email || '',
@@ -1115,20 +1186,25 @@ export const StoreProvider: React.FC<{ children: React.ReactNode }> = ({ childre
     imageFileName?: string
   ): Promise<string> => {
     if (!isAdmin) throw new Error('Unauthorized: Only store owner can send replies');
-    const custId = `CUST-${targetUserId.slice(-6).toUpperCase()}`;
-    const conversationId = `conv_${targetUserId}`;
+    const customerUid = targetUserId;
+    const custId = `CUST-${customerUid.slice(-6).toUpperCase()}`;
+    const conversationId = getConversationId(customerUid, OWNER_UID);
     const now = new Date().toISOString();
 
-    const prevCustMsg = supportMessages.find((m) => m.userId === targetUserId && m.sender === 'customer');
-    const relatedOrder = orders.find((o) => o.userId === targetUserId);
+    const prevCustMsg = supportMessages.find(
+      (m) => (m.userId === customerUid || m.customerUid === customerUid) && m.sender === 'customer'
+    );
+    const relatedOrder = orders.find((o) => o.userId === customerUid);
     const customerName = prevCustMsg?.userName || relatedOrder?.customerName || 'Customer';
     const customerEmail = prevCustMsg?.userEmail || relatedOrder?.customerEmail || '';
 
     const newMsg = sanitizeForFirestore({
       conversationId,
-      userId: targetUserId,
-      senderId: currentUser?.uid || 'admin',
-      recipientId: targetUserId,
+      customerUid,
+      ownerUid: OWNER_UID,
+      userId: customerUid,
+      senderId: currentUser?.uid || OWNER_UID,
+      recipientId: customerUid,
       senderRole: 'owner' as const,
       sender: 'owner' as const,
       senderName: 'TrendPro Store Owner',
@@ -1146,13 +1222,47 @@ export const StoreProvider: React.FC<{ children: React.ReactNode }> = ({ childre
 
     const docRef = await addDoc(collection(db, 'supportMessages'), newMsg);
 
-    // Update conversation metadata
+    // Save and update conversation document in deterministic 'chats' collection
+    try {
+      await setDoc(
+        doc(db, 'chats', conversationId),
+        sanitizeForFirestore({
+          id: conversationId,
+          conversationId,
+          customerUid,
+          ownerUid: OWNER_UID,
+          participants: [customerUid, OWNER_UID],
+          userId: customerUid,
+          customerId: custId,
+          customerName,
+          customerEmail,
+          lastMessage: reply.trim() || (imageUrl ? '📷 [Image Attachment]' : 'Owner Reply'),
+          lastMessageAt: now,
+          lastSender: 'owner',
+          orderId: orderId || null,
+          unreadByOwner: false,
+          unreadByCustomer: true,
+          updatedAt: now,
+        }),
+        { merge: true }
+      );
+
+      // Mirror to chats subcollection
+      await setDoc(doc(db, 'chats', conversationId, 'messages', docRef.id), newMsg);
+    } catch (e) {
+      console.warn('Chats sync notice:', e);
+    }
+
+    // Also update legacy supportConversations
     try {
       await setDoc(
         doc(db, 'supportConversations', conversationId),
         sanitizeForFirestore({
           id: conversationId,
-          userId: targetUserId,
+          conversationId,
+          customerUid,
+          ownerUid: OWNER_UID,
+          userId: customerUid,
           customerId: custId,
           customerName,
           customerEmail,
@@ -1173,7 +1283,7 @@ export const StoreProvider: React.FC<{ children: React.ReactNode }> = ({ childre
       await addDoc(
         collection(db, 'notifications'),
         sanitizeForFirestore({
-          userId: targetUserId,
+          userId: customerUid,
           title: 'Store Owner Replied to Your Chat',
           message: reply.trim() || 'Store owner sent an image attachment.',
           type: 'system',
@@ -1191,10 +1301,14 @@ export const StoreProvider: React.FC<{ children: React.ReactNode }> = ({ childre
 
   // Mark chat messages as read
   const markChatMessagesAsRead = async (chatUserId: string, readerRole: 'customer' | 'owner') => {
-    if (!currentUser) return;
+    if (!currentUser || !chatUserId) return;
+    const conversationId = getConversationId(chatUserId, OWNER_UID);
     const senderToMark = readerRole === 'customer' ? 'owner' : 'customer';
     const unreadMsgs = supportMessages.filter(
-      (m) => m.userId === chatUserId && m.sender === senderToMark && !m.isRead
+      (m) =>
+        (m.userId === chatUserId || m.customerUid === chatUserId || m.conversationId === conversationId) &&
+        m.sender === senderToMark &&
+        !m.isRead
     );
     for (const msg of unreadMsgs) {
       try {
@@ -1202,10 +1316,22 @@ export const StoreProvider: React.FC<{ children: React.ReactNode }> = ({ childre
           isRead: true,
           readAt: new Date().toISOString(),
         });
+        await updateDoc(doc(db, 'chats', conversationId, 'messages', msg.id), {
+          isRead: true,
+          readAt: new Date().toISOString(),
+        }).catch(() => {});
       } catch (e) {
         console.warn('Error marking message read:', e);
       }
     }
+
+    // Update conversation document read flags
+    try {
+      await updateDoc(
+        doc(db, 'chats', conversationId),
+        readerRole === 'owner' ? { unreadByOwner: false } : { unreadByCustomer: false }
+      );
+    } catch {}
   };
 
   // OWNER CREDITS WALLET OF ANY CUSTOMER DIRECTLY FROM CHAT
@@ -1298,6 +1424,7 @@ export const StoreProvider: React.FC<{ children: React.ReactNode }> = ({ childre
         orders,
         notifications,
         supportMessages,
+        chats,
         announcementConfig,
         storeConfig,
         loading,

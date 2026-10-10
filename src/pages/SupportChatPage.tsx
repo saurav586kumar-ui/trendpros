@@ -22,7 +22,7 @@ import {
   Download
 } from 'lucide-react';
 import { ref, uploadBytes, getDownloadURL } from 'firebase/storage';
-import { useAuth } from '../context/AuthContext';
+import { useAuth, OWNER_UID, getConversationId } from '../context/AuthContext';
 import { useStore } from '../context/StoreContext';
 import { storage } from '../config/firebase';
 import { SupportMessage } from '../types';
@@ -54,6 +54,7 @@ export const SupportChatPage: React.FC<SupportChatPageProps> = ({
   const { currentUser, userProfile, isAdmin, signInWithGoogle } = useAuth();
   const {
     supportMessages,
+    chats,
     orders,
     sendSupportMessage,
     replySupportMessage,
@@ -135,6 +136,36 @@ export const SupportChatPage: React.FC<SupportChatPageProps> = ({
     }
   }
 
+  // Include conversations from Firestore 'chats' collection
+  for (const c of chats) {
+    if (!c.customerUid || c.customerUid === OWNER_UID) continue;
+    const existing = customerMap.get(c.customerUid);
+    const unreadCount = c.unreadByOwner ? 1 : 0;
+    if (!existing) {
+      customerMap.set(c.customerUid, {
+        userId: c.customerUid,
+        customerId: c.customerId || `CUST-${c.customerUid.slice(-6).toUpperCase()}`,
+        userName: c.customerName || 'Customer',
+        userEmail: c.customerEmail || '',
+        lastMessage: c.lastMessage || 'Conversation active',
+        lastMessageAt: c.lastMessageAt || c.updatedAt || new Date().toISOString(),
+        unreadCount,
+        orderId: c.orderId,
+      });
+    } else {
+      if (c.customerName && c.customerName !== 'Customer') existing.userName = c.customerName;
+      if (c.customerEmail) existing.userEmail = c.customerEmail;
+      if (new Date(c.lastMessageAt || c.updatedAt || 0).getTime() > new Date(existing.lastMessageAt).getTime()) {
+        existing.lastMessage = c.lastMessage || existing.lastMessage;
+        existing.lastMessageAt = c.lastMessageAt || existing.lastMessageAt;
+        if (c.orderId) existing.orderId = c.orderId;
+      }
+      if (c.unreadByOwner) {
+        existing.unreadCount = Math.max(existing.unreadCount, 1);
+      }
+    }
+  }
+
   // Also include customers who have placed orders
   for (const o of orders) {
     if (!o.userId || o.userId === 'guest') continue;
@@ -168,6 +199,9 @@ export const SupportChatPage: React.FC<SupportChatPageProps> = ({
   const activeChatUserId = isAdmin
     ? adminSelectedUserId || customerUserIdParam || (customerList[0]?.userId ?? (currentUser?.uid || ''))
     : (currentUser?.uid || '');
+
+  // Consistently derived conversation ID from customerUid and static OWNER_UID
+  const activeConversationId = getConversationId(activeChatUserId, OWNER_UID);
 
   const currentChatCustomer = customerList.find((c) => c.userId === activeChatUserId);
 
@@ -210,8 +244,14 @@ export const SupportChatPage: React.FC<SupportChatPageProps> = ({
     );
   }
 
-  // Messages for active conversation
-  const confirmedMessages = supportMessages.filter((m) => m.userId === activeChatUserId);
+  // Messages for active conversation, mapped via conversationId and customerUid
+  const confirmedMessages = supportMessages.filter(
+    (m) =>
+      m.conversationId === activeConversationId ||
+      m.userId === activeChatUserId ||
+      m.customerUid === activeChatUserId ||
+      (m.conversationId && m.conversationId.includes(activeChatUserId))
+  );
   const activePending = pendingMessages.filter((m) => m.userId === activeChatUserId);
 
   // Combined messages
@@ -604,6 +644,12 @@ export const SupportChatPage: React.FC<SupportChatPageProps> = ({
                     {isAdmin
                       ? `${currentChatCustomer?.userName || 'Customer'} (${currentChatCustomer?.customerId || 'CUST'})`
                       : 'TrendPro Store Owner'}
+                  </span>
+                  <span
+                    className="text-[10px] text-indigo-700 bg-indigo-50 border border-indigo-200 px-2 py-0.5 rounded-md font-mono"
+                    title={`Firestore Conversation ID: ${activeConversationId}`}
+                  >
+                    Doc #{activeConversationId.slice(-14)}
                   </span>
                   {isAdmin && currentChatCustomer?.orderId && (
                     <button

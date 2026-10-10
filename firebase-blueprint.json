@@ -87,6 +87,26 @@
         "comment": { "type": "string" }
       },
       "required": ["id", "productId", "userId", "rating"]
+    },
+    "Chat": {
+      "title": "Chat",
+      "description": "Support chat conversation between customer and store owner",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string" },
+        "conversationId": { "type": "string" },
+        "customerUid": { "type": "string" },
+        "ownerUid": { "type": "string" },
+        "userId": { "type": "string" },
+        "customerId": { "type": "string" },
+        "customerName": { "type": "string" },
+        "customerEmail": { "type": "string" },
+        "lastMessage": { "type": "string" },
+        "lastMessageAt": { "type": "string" },
+        "lastSender": { "type": "string" },
+        "updatedAt": { "type": "string" }
+      },
+      "required": ["id", "conversationId", "customerUid", "ownerUid"]
     }
   },
   "firestore": {
@@ -113,6 +133,10 @@
     "/reviews/{reviewId}": {
       "schema": "Review",
       "description": "Product customer reviews"
+    },
+    "/chats/{chatId}": {
+      "schema": "Chat",
+      "description": "Customer-to-owner support chat conversations"
     }
   }
 }

@@ -16,8 +16,18 @@ import {
 import { auth, db, handleFirestoreError, OperationType } from '../config/firebase';
 import { UserProfile } from '../types';
 
-// Configured owner/admin email
+// Configured owner/admin email and static UID
 export const OWNER_EMAIL = 'saurav586kumar@gmail.com';
+export const OWNER_UID = 'sz118QZdKAg5VYH4k8CkDubIITo2';
+
+/**
+ * Deterministically derives a unique conversationId from customerUid and static ownerUid.
+ * Both owner and customer will always reference the exact same conversation document.
+ */
+export const getConversationId = (customerUid: string, ownerUid: string = OWNER_UID): string => {
+  if (!customerUid) return '';
+  return `chat_${customerUid}_${ownerUid}`;
+};
 
 interface AuthContextType {
   currentUser: User | null;
