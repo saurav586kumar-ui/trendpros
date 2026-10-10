@@ -14,7 +14,8 @@ import {
   Wallet,
   LogOut,
   Bell,
-  Scale
+  Scale,
+  MessageSquare
 } from 'lucide-react';
 import { useAuth } from '../../context/AuthContext';
 import { useCart } from '../../context/CartContext';
@@ -29,7 +30,7 @@ interface HeaderProps {
 export const Header: React.FC<HeaderProps> = ({ onNavigate, currentRoute }) => {
   const { currentUser, userProfile, isAdmin, signInWithGoogle, signOut } = useAuth();
   const { cartCount, wishlistCount, compareList, subtotal } = useCart();
-  const { products, categories, notifications } = useStore();
+  const { products, categories, notifications, supportMessages } = useStore();
 
   const [searchQuery, setSearchQuery] = useState('');
   const [showSearchResults, setShowSearchResults] = useState(false);
@@ -43,6 +44,9 @@ export const Header: React.FC<HeaderProps> = ({ onNavigate, currentRoute }) => {
   const userMenuRef = useRef<HTMLDivElement>(null);
 
   const unreadNotifs = notifications.filter((n) => !n.isRead).length;
+  const unreadChatCount = isAdmin
+    ? supportMessages.filter((m) => m.sender === 'customer' && !m.isRead).length
+    : supportMessages.filter((m) => m.sender === 'owner' && !m.isRead).length;
 
   // Filtered search results
   const searchResults: Product[] = searchQuery.trim().length > 1
@@ -359,6 +363,22 @@ export const Header: React.FC<HeaderProps> = ({ onNavigate, currentRoute }) => {
                 {unreadNotifs > 0 && (
                   <span className="absolute -top-1 -right-1 bg-indigo-600 text-white font-bold text-[10px] w-4 h-4 rounded-full flex items-center justify-center ring-2 ring-white animate-pulse">
                     {unreadNotifs}
+                  </span>
+                )}
+              </button>
+            )}
+
+            {/* Support / Owner Chat Shortcut */}
+            {currentUser && (
+              <button
+                onClick={() => onNavigate('support')}
+                className="relative p-2 text-slate-600 hover:text-indigo-600 hover:bg-indigo-50/60 rounded-xl transition-colors flex items-center cursor-pointer"
+                title={isAdmin ? 'Store Owner Support Inbox' : 'Direct Support Chat with Owner'}
+              >
+                <MessageSquare className="w-5 h-5 text-indigo-600" />
+                {unreadChatCount > 0 && (
+                  <span className="absolute -top-1 -right-1 bg-rose-500 text-white font-bold text-[10px] w-4 h-4 rounded-full flex items-center justify-center ring-2 ring-white animate-pulse">
+                    {unreadChatCount}
                   </span>
                 )}
               </button>

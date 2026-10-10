@@ -84,6 +84,7 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({ onNavigate }) =>
 
   // Success Notification Toast
   const [dashboardSuccessMsg, setDashboardSuccessMsg] = useState('');
+  const [dashboardErrorMsg, setDashboardErrorMsg] = useState('');
 
   // Product Modal & Image Upload
   const [productModal, setProductModal] = useState<boolean>(false);
@@ -290,14 +291,16 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({ onNavigate }) =>
       setEditingProductId(null);
       setTimeout(() => setDashboardSuccessMsg(''), 5000);
     } catch (err: any) {
-      alert(err.message || 'Error saving product');
+      setDashboardErrorMsg(err.message || 'Error saving product');
+      setTimeout(() => setDashboardErrorMsg(''), 5000);
     }
   };
 
   const handleSaveCategory = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!newCat.name.trim()) {
-      alert('Please enter category name');
+      setDashboardErrorMsg('Please enter category name');
+      setTimeout(() => setDashboardErrorMsg(''), 4000);
       return;
     }
 
@@ -315,14 +318,16 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({ onNavigate }) =>
       setNewCat({ name: '', slug: '', icon: 'Layers', description: '' });
       setTimeout(() => setDashboardSuccessMsg(''), 5000);
     } catch (err: any) {
-      alert(err.message || 'Error creating category');
+      setDashboardErrorMsg(err.message || 'Error creating category');
+      setTimeout(() => setDashboardErrorMsg(''), 5000);
     }
   };
 
   const handleSaveBanner = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!newBanner.imageUrl) {
-      alert('Please upload or provide a banner image.');
+      setDashboardErrorMsg('Please upload or provide a banner image.');
+      setTimeout(() => setDashboardErrorMsg(''), 4000);
       return;
     }
 
@@ -338,7 +343,8 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({ onNavigate }) =>
       setDashboardSuccessMsg('Promotional banner published successfully (pure image with click redirect)!');
       setTimeout(() => setDashboardSuccessMsg(''), 5000);
     } catch (err: any) {
-      alert(err.message || 'Error saving banner');
+      setDashboardErrorMsg(err.message || 'Error saving banner');
+      setTimeout(() => setDashboardErrorMsg(''), 5000);
     }
   };
 
@@ -349,7 +355,8 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({ onNavigate }) =>
       setAnnouncementSavedMsg('Top offer banner settings updated successfully!');
       setTimeout(() => setAnnouncementSavedMsg(''), 3000);
     } catch (err: any) {
-      alert(err.message || 'Error updating announcement');
+      setDashboardErrorMsg(err.message || 'Error updating announcement');
+      setTimeout(() => setDashboardErrorMsg(''), 5000);
     }
   };
 
@@ -360,7 +367,8 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({ onNavigate }) =>
       setSeedingStatus('Catalog synchronized successfully to Cloud Firestore!');
       setTimeout(() => setSeedingStatus(''), 4000);
     } catch (err: any) {
-      alert(err.message || 'Error syncing database');
+      setDashboardErrorMsg(err.message || 'Error syncing database');
+      setTimeout(() => setDashboardErrorMsg(''), 5000);
       setSeedingStatus('');
     }
   };
@@ -396,7 +404,8 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({ onNavigate }) =>
       setActionNote('');
       setTimeout(() => setDashboardSuccessMsg(''), 5000);
     } catch (err: any) {
-      alert(err.message || 'Error processing cancellation request');
+      setDashboardErrorMsg(err.message || 'Error processing cancellation request');
+      setTimeout(() => setDashboardErrorMsg(''), 5000);
     } finally {
       setIsProcessingAction(false);
     }
@@ -419,7 +428,8 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({ onNavigate }) =>
       setActionNote('');
       setTimeout(() => setDashboardSuccessMsg(''), 5000);
     } catch (err: any) {
-      alert(err.message || 'Error processing return request');
+      setDashboardErrorMsg(err.message || 'Error processing return request');
+      setTimeout(() => setDashboardErrorMsg(''), 5000);
     } finally {
       setIsProcessingAction(false);
     }
@@ -490,6 +500,18 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({ onNavigate }) =>
             <span className="text-sm">{dashboardSuccessMsg}</span>
           </div>
           <button onClick={() => setDashboardSuccessMsg('')} className="p-1 hover:text-emerald-950">
+            <X className="w-4 h-4" />
+          </button>
+        </div>
+      )}
+
+      {dashboardErrorMsg && (
+        <div className="p-4 bg-rose-50 border border-rose-300 text-rose-800 text-xs font-bold rounded-2xl flex items-center justify-between shadow-xs animate-in fade-in slide-in-from-top-2">
+          <div className="flex items-center gap-2">
+            <AlertTriangle className="w-5 h-5 text-rose-600 shrink-0" />
+            <span className="text-sm">{dashboardErrorMsg}</span>
+          </div>
+          <button onClick={() => setDashboardErrorMsg('')} className="p-1 hover:text-rose-950">
             <X className="w-4 h-4" />
           </button>
         </div>
@@ -1169,26 +1191,29 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({ onNavigate }) =>
                     onClick={async () => {
                       const reply = chatReplyText[msg.id];
                       if (reply) {
-                        await replySupportMessage(msg.userId, reply, msg.orderId);
-                        setChatReplyText({ ...chatReplyText, [msg.id]: '' });
-                        alert('Reply sent to customer!');
+                        try {
+                          await replySupportMessage(msg.userId, reply, msg.orderId);
+                          setChatReplyText({ ...chatReplyText, [msg.id]: '' });
+                          setDashboardSuccessMsg('Reply sent to customer successfully!');
+                          setTimeout(() => setDashboardSuccessMsg(''), 4000);
+                        } catch (err: any) {
+                          setDashboardErrorMsg(err.message || 'Error sending reply');
+                          setTimeout(() => setDashboardErrorMsg(''), 4000);
+                        }
                       }
                     }}
-                    className="bg-indigo-600 hover:bg-indigo-700 text-white font-bold px-4 py-1.5 rounded-xl shadow-xs"
+                    className="bg-indigo-600 hover:bg-indigo-700 text-white font-bold px-4 py-1.5 rounded-xl shadow-xs cursor-pointer"
                   >
                     Reply
                   </button>
                   <button
                     onClick={() => {
-                      const amt = prompt('Enter wallet amount (₹) to credit this customer:');
-                      if (amt && Number(amt) > 0) {
-                        const reason = prompt('Enter reason for credit:', 'Store courtesy bonus');
-                        creditCustomerWalletFromChat(msg.userId, Number(amt), reason || 'Store credit');
-                      }
+                      onNavigate('support', { userId: msg.userId, orderId: msg.orderId });
                     }}
-                    className="bg-emerald-600 hover:bg-emerald-700 text-white font-bold px-3 py-1.5 rounded-xl shadow-xs flex items-center gap-1"
+                    className="bg-emerald-600 hover:bg-emerald-700 text-white font-bold px-3 py-1.5 rounded-xl shadow-xs flex items-center gap-1 cursor-pointer"
+                    title="Open live chat to credit wallet or attach images"
                   >
-                    <Wallet className="w-3.5 h-3.5" /> +Credit
+                    <Wallet className="w-3.5 h-3.5" /> Open Chat & Credit
                   </button>
                 </div>
               </div>

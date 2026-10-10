@@ -59,6 +59,8 @@ export const OrderDetailPage: React.FC<OrderDetailPageProps> = ({
   // Gift Card Redeem State
   const [redeemingCard, setRedeemingCard] = useState(false);
   const [redeemResult, setRedeemResult] = useState<string>('');
+  const [orderNotice, setOrderNotice] = useState<{ text: string; type: 'success' | 'error' } | null>(null);
+  const [copiedCard, setCopiedCard] = useState(false);
 
   if (!order) {
     return (
@@ -101,9 +103,11 @@ export const OrderDetailPage: React.FC<OrderDetailPageProps> = ({
     try {
       await requestCancelOrder(order.id, cancelReason);
       setShowCancelModal(false);
-      alert('Cancellation request submitted to store owner for review.');
+      setOrderNotice({ text: 'Cancellation request submitted to store owner for review.', type: 'success' });
+      setTimeout(() => setOrderNotice(null), 5000);
     } catch (err: any) {
-      alert(err.message || 'Error requesting cancellation');
+      setOrderNotice({ text: err.message || 'Error requesting cancellation', type: 'error' });
+      setTimeout(() => setOrderNotice(null), 5000);
     } finally {
       setSubmittingCancel(false);
     }
@@ -128,9 +132,11 @@ export const OrderDetailPage: React.FC<OrderDetailPageProps> = ({
     try {
       await requestReturnOrder(order.id, returnReason, returnImages);
       setShowReturnModal(false);
-      alert('Return request and inspection photos submitted to store owner!');
+      setOrderNotice({ text: 'Return request and inspection photos submitted to store owner!', type: 'success' });
+      setTimeout(() => setOrderNotice(null), 5000);
     } catch (err: any) {
-      alert(err.message || 'Error requesting return');
+      setOrderNotice({ text: err.message || 'Error requesting return', type: 'error' });
+      setTimeout(() => setOrderNotice(null), 5000);
     } finally {
       setSubmittingReturn(false);
     }
@@ -152,6 +158,20 @@ export const OrderDetailPage: React.FC<OrderDetailPageProps> = ({
 
   return (
     <div className="max-w-5xl mx-auto px-4 sm:px-6 lg:px-8 py-8 space-y-8">
+      {/* In-app Notice */}
+      {orderNotice && (
+        <div
+          className={`p-4 rounded-2xl text-xs font-bold flex items-center justify-between shadow-xs animate-in fade-in ${
+            orderNotice.type === 'success'
+              ? 'bg-emerald-50 border border-emerald-300 text-emerald-800'
+              : 'bg-rose-50 border border-rose-300 text-rose-800'
+          }`}
+        >
+          <span>{orderNotice.text}</span>
+          <button onClick={() => setOrderNotice(null)} className="ml-2 font-black">✕</button>
+        </div>
+      )}
+
       {/* Top Header */}
       <div className="flex flex-col sm:flex-row sm:items-center justify-between pb-4 border-b border-slate-200 gap-4">
         <div className="flex items-center gap-3">
@@ -250,12 +270,14 @@ export const OrderDetailPage: React.FC<OrderDetailPageProps> = ({
                 <button
                   onClick={() => {
                     navigator.clipboard.writeText(order.giftCardDetails!.cardNumber);
-                    alert('Gift Card Number copied to clipboard!');
+                    setCopiedCard(true);
+                    setTimeout(() => setCopiedCard(false), 2000);
                   }}
-                  className="p-1 hover:text-amber-200"
+                  className="p-1 hover:text-amber-200 cursor-pointer flex items-center gap-1"
                   title="Copy Card Number"
                 >
                   <Copy className="w-4 h-4" />
+                  {copiedCard && <span className="text-[10px] text-emerald-300 font-bold">Copied!</span>}
                 </button>
               </div>
             </div>

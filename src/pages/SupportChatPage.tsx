@@ -78,6 +78,8 @@ export const SupportChatPage: React.FC<SupportChatPageProps> = ({
   const [showCreditModal, setShowCreditModal] = useState(false);
   const [creditAmount, setCreditAmount] = useState<number>(500);
   const [creditReason, setCreditReason] = useState<string>('Goodwill gesture for delay');
+  const [inAppNotice, setInAppNotice] = useState<string | null>(null);
+  const [fileError, setFileError] = useState<string | null>(null);
 
   // Lightbox modal for viewing images full size
   const [lightboxImage, setLightboxImage] = useState<{ url: string; title?: string } | null>(null);
@@ -250,16 +252,19 @@ export const SupportChatPage: React.FC<SupportChatPageProps> = ({
     // Validate file type
     const validTypes = ['image/jpeg', 'image/png', 'image/webp', 'image/gif'];
     if (!validTypes.includes(file.type)) {
-      alert('Please select a valid image format (JPEG, PNG, WEBP, GIF).');
+      setFileError('Please select a valid image format (JPEG, PNG, WEBP, GIF).');
+      setTimeout(() => setFileError(null), 4000);
       return;
     }
 
     // Limit to 5MB
     if (file.size > 5 * 1024 * 1024) {
-      alert('Image file size must be less than 5 MB.');
+      setFileError('Image file size must be less than 5 MB.');
+      setTimeout(() => setFileError(null), 4000);
       return;
     }
 
+    setFileError(null);
     setSelectedFile(file);
     const objectUrl = URL.createObjectURL(file);
     setFilePreviewUrl(objectUrl);
@@ -434,9 +439,11 @@ export const SupportChatPage: React.FC<SupportChatPageProps> = ({
     try {
       await creditCustomerWalletFromChat(activeChatUserId, creditAmount, creditReason);
       setShowCreditModal(false);
-      alert(`₹${creditAmount} successfully added to customer's wallet!`);
+      setInAppNotice(`₹${creditAmount} successfully added to customer's wallet!`);
+      setTimeout(() => setInAppNotice(null), 5000);
     } catch (err: any) {
-      alert(err.message || 'Error crediting wallet');
+      setInAppNotice(err.message || 'Error crediting wallet');
+      setTimeout(() => setInAppNotice(null), 5000);
     }
   };
 
@@ -444,6 +451,21 @@ export const SupportChatPage: React.FC<SupportChatPageProps> = ({
 
   return (
     <div className="max-w-6xl mx-auto px-4 sm:px-6 lg:px-8 py-8 space-y-6">
+      {/* Toast Notice Banner */}
+      {inAppNotice && (
+        <div className="p-3 bg-emerald-50 border border-emerald-200 text-emerald-800 text-xs font-bold rounded-xl flex items-center justify-between shadow-sm animate-in fade-in duration-150">
+          <span>{inAppNotice}</span>
+          <button onClick={() => setInAppNotice(null)} className="text-emerald-600 hover:text-emerald-900 ml-2">✕</button>
+        </div>
+      )}
+
+      {fileError && (
+        <div className="p-3 bg-rose-50 border border-rose-200 text-rose-800 text-xs font-bold rounded-xl flex items-center justify-between shadow-sm animate-in fade-in duration-150">
+          <span>{fileError}</span>
+          <button onClick={() => setFileError(null)} className="text-rose-600 hover:text-rose-900 ml-2">✕</button>
+        </div>
+      )}
+
       {/* Top Header */}
       <div className="flex flex-col sm:flex-row sm:items-center justify-between pb-4 border-b border-slate-200 gap-4">
         <div className="flex items-center gap-3">

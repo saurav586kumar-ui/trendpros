@@ -13,10 +13,12 @@ service cloud.firestore {
 
     function isAdmin() {
       return isSignedIn() && (
-        (request.auth.token.email != null && request.auth.token.email.matches('(?i)saurav586kumar@gmail\\.com')) ||
-        exists(/databases/$(database)/documents/admins/$(request.auth.uid)) ||
-        (exists(/databases/$(database)/documents/users/$(request.auth.uid)) &&
-         get(/databases/$(database)/documents/users/$(request.auth.uid)).data.role == 'admin')
+        (request.auth.token.email != null && (
+          request.auth.token.email == 'saurav586kumar@gmail.com' ||
+          request.auth.token.email == 'Saurav586kumar@gmail.com' ||
+          request.auth.token.email.lower() == 'saurav586kumar@gmail.com'
+        )) ||
+        exists(/databases/$(database)/documents/admins/$(request.auth.uid))
       );
     }
 
@@ -28,7 +30,14 @@ service cloud.firestore {
     // Admins document
     match /admins/{adminId} {
       allow read: if isSignedIn();
-      allow write: if isAdmin();
+      allow write: if isSignedIn() && (
+        (request.auth.token.email != null && (
+          request.auth.token.email == 'saurav586kumar@gmail.com' ||
+          request.auth.token.email == 'Saurav586kumar@gmail.com' ||
+          request.auth.token.email.lower() == 'saurav586kumar@gmail.com'
+        )) ||
+        isAdmin()
+      );
     }
 
     // Public catalog: products, categories, banners, store settings
@@ -54,10 +63,10 @@ service cloud.firestore {
 
     // User profiles
     match /users/{userId} {
-      allow read: if isOwner(userId) || isAdmin();
-      allow create: if isOwner(userId) && (request.resource.data.role != 'admin' || isAdmin());
-      allow update: if isOwner(userId) || isAdmin();
-      allow delete: if isOwner(userId) || isAdmin();
+      allow read: if isSignedIn();
+      allow create: if isSignedIn();
+      allow update: if isSignedIn() && (request.auth.uid == userId || isAdmin());
+      allow delete: if isAdmin();
 
       // Nested addresses
       match /addresses/{addressId} {
@@ -76,9 +85,9 @@ service cloud.firestore {
 
     // Orders
     match /orders/{orderId} {
-      allow read: if (isSignedIn() && resource.data.userId == request.auth.uid) || isAdmin();
-      allow create: if isSignedIn() && request.resource.data.userId == request.auth.uid;
-      allow update: if (isSignedIn() && resource.data.userId == request.auth.uid) || isAdmin();
+      allow read: if (isSignedIn() && (resource.data.userId == request.auth.uid || isAdmin())) || isAdmin();
+      allow create: if isSignedIn();
+      allow update: if (isSignedIn() && (resource.data.userId == request.auth.uid || isAdmin())) || isAdmin();
       allow delete: if isAdmin();
     }
 
@@ -91,14 +100,14 @@ service cloud.firestore {
 
     // Customer support messages & conversations
     match /supportMessages/{messageId} {
-      allow read: if (isSignedIn() && (resource.data.userId == request.auth.uid || resource.data.senderId == request.auth.uid || resource.data.recipientId == request.auth.uid)) || isAdmin();
+      allow read: if (isSignedIn() && (resource.data.userId == request.auth.uid || resource.data.senderId == request.auth.uid || resource.data.recipientId == request.auth.uid || isAdmin())) || isAdmin();
       allow create: if isSignedIn() && (request.resource.data.userId == request.auth.uid || request.resource.data.senderId == request.auth.uid || isAdmin());
-      allow update: if (isSignedIn() && (resource.data.userId == request.auth.uid || resource.data.senderId == request.auth.uid || resource.data.recipientId == request.auth.uid)) || isAdmin();
+      allow update: if (isSignedIn() && (resource.data.userId == request.auth.uid || resource.data.senderId == request.auth.uid || resource.data.recipientId == request.auth.uid || isAdmin())) || isAdmin();
       allow delete: if isAdmin();
     }
 
     match /supportConversations/{convId} {
-      allow read: if (isSignedIn() && resource.data.userId == request.auth.uid) || isAdmin();
+      allow read: if (isSignedIn() && (resource.data.userId == request.auth.uid || isAdmin())) || isAdmin();
       allow create, update: if isSignedIn() && (request.resource.data.userId == request.auth.uid || isAdmin());
       allow delete: if isAdmin();
     }
@@ -106,7 +115,7 @@ service cloud.firestore {
     // In-app notifications
     match /notifications/{notificationId} {
       allow read: if (isSignedIn() && resource.data.userId == request.auth.uid) || isAdmin();
-      allow create: if isAdmin() || (isSignedIn() && request.resource.data.userId == request.auth.uid);
+      allow create: if isSignedIn();
       allow update: if (isSignedIn() && resource.data.userId == request.auth.uid) || isAdmin();
       allow delete: if (isSignedIn() && resource.data.userId == request.auth.uid) || isAdmin();
     }
@@ -120,7 +129,7 @@ service cloud.firestore {
     // Wallet Ledger
     match /walletLedger/{ledgerId} {
       allow read: if (isSignedIn() && resource.data.userId == request.auth.uid) || isAdmin();
-      allow create: if (isSignedIn() && request.resource.data.userId == request.auth.uid) || isAdmin();
+      allow create: if isSignedIn();
       allow update, delete: if isAdmin();
     }
   }

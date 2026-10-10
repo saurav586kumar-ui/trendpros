@@ -229,12 +229,11 @@ export const StoreProvider: React.FC<{ children: React.ReactNode }> = ({ childre
 
     let q;
     if (isAdmin) {
-      q = query(collection(db, 'orders'), orderBy('createdAt', 'desc'));
+      q = query(collection(db, 'orders'));
     } else {
       q = query(
         collection(db, 'orders'),
-        where('userId', '==', currentUser.uid),
-        orderBy('createdAt', 'desc')
+        where('userId', '==', currentUser.uid)
       );
     }
 
@@ -245,6 +244,7 @@ export const StoreProvider: React.FC<{ children: React.ReactNode }> = ({ childre
           id: d.id,
           ...d.data(),
         })) as Order[];
+        orderList.sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime());
         setOrders(orderList);
       },
       (error) => {
@@ -256,14 +256,14 @@ export const StoreProvider: React.FC<{ children: React.ReactNode }> = ({ childre
     const unsubNotifications = onSnapshot(
       query(
         collection(db, 'notifications'),
-        where('userId', '==', currentUser.uid),
-        orderBy('createdAt', 'desc')
+        where('userId', '==', currentUser.uid)
       ),
       (snapshot) => {
         const notifList = snapshot.docs.map((d) => ({
           id: d.id,
           ...d.data(),
         })) as NotificationItem[];
+        notifList.sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime());
         setNotifications(notifList);
       },
       (error) => {
