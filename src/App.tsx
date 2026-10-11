@@ -6,6 +6,7 @@ import { StoreProvider } from './context/StoreContext';
 import { AnnouncementBar } from './components/common/AnnouncementBar';
 import { Header } from './components/common/Header';
 import { Footer } from './components/common/Footer';
+import { AIAssistantWidget } from './components/common/AIAssistantWidget';
 
 // Pages
 import { HomePage } from './pages/HomePage';
@@ -385,6 +386,8 @@ export function AppContent() {
       <main className="flex-1">
         {renderPage()}
       </main>
+
+      <AIAssistantWidget onNavigate={navigate} />
 
       <Footer onNavigate={navigate} />
     </div>

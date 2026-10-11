@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useMemo } from 'react';
 import {
   ShieldCheck,
   Package,
@@ -30,20 +30,33 @@ import {
   X,
   MessageSquare,
   Loader2,
+  Flame,
   ArrowUp,
   ArrowDown,
-  Check,
-  Flame,
+  Save,
+  Bot,
+  Volume2,
+  Search,
+  SlidersHorizontal,
+  RefreshCw,
   Star,
-  CheckSquare,
-  Square
+  HelpCircle
 } from 'lucide-react';
 import { useAuth, OWNER_EMAIL } from '../context/AuthContext';
 import { useStore } from '../context/StoreContext';
-import { Product, OrderStatus, Banner, Voucher, StoreAnnouncementConfig, Category, Order } from '../types';
-import { uploadImageFile } from '../utils/storage';
-import { StarRating } from '../components/common/StarRating';
-import { ProductImageUploader } from '../components/common/ProductImageUploader';
+import {
+  Product,
+  OrderStatus,
+  Banner,
+  Voucher,
+  StoreAnnouncementConfig,
+  Category,
+  Order,
+  WebsiteConfig,
+  AIKnowledgeConfig,
+  TrendingConfig,
+  TrendingProductItem
+} from '../types';
 
 interface AdminDashboardProps {
   onNavigate: (route: string, params?: Record<string, any>) => void;
@@ -70,9 +83,12 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({ onNavigate }) =>
     vouchers,
     orders,
     supportMessages,
+    chats,
     announcementConfig,
     storeConfig,
-    trendingProductIds,
+    websiteConfig,
+    aiKnowledgeConfig,
+    trendingConfig,
     seedInitialDataToFirestore,
     updateOrderStatus,
     handleCancelRequest,
@@ -84,29 +100,73 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({ onNavigate }) =>
     deleteCategory,
     addBanner,
     deleteBanner,
-    updateTrendingProducts,
     replySupportMessage,
+    markChatMessagesAsRead,
     creditCustomerWalletFromChat,
     updateAnnouncementConfig,
+    updateWebsiteConfig,
+    updateAIKnowledge,
+    updateTrendingProducts,
+    saveMasterSet,
   } = useStore();
 
   const [activeTab, setActiveTab] = useState<
-    'overview' | 'products' | 'trending' | 'orders' | 'banners' | 'announcement' | 'support' | 'vouchers'
+    'overview' | 'products' | 'trending' | 'orders' | 'banners' | 'announcement' | 'support' | 'vouchers' | 'assistant'
   >('overview');
+
+  // Master Set Modal & Progress State
+  const [showMasterSetModal, setShowMasterSetModal] = useState<boolean>(false);
+  const [isSavingMasterSet, setIsSavingMasterSet] = useState<boolean>(false);
+  const [masterSetResult, setMasterSetResult] = useState<{
+    success: boolean;
+    revision: number;
+    savedSections: string[];
+    errors?: string[];
+  } | null>(null);
+
+  // Trending Management State
+  const [trendingSearch, setTrendingSearch] = useState<string>('');
+  const [trendingCategoryFilter, setTrendingCategoryFilter] = useState<string>('all');
+  const [trendingItems, setTrendingItems] = useState<{ productId: string; priority: number }[]>([]);
+  const [isSavingTrending, setIsSavingTrending] = useState<boolean>(false);
+
+  // Initialize trending items from Firestore config or fallback products
+  useEffect(() => {
+    if (trendingConfig?.items && trendingConfig.items.length > 0) {
+      setTrendingItems(trendingConfig.items);
+    } else {
+      const explicit = products
+        .filter((p) => p.isTrending)
+        .map((p, idx) => ({ productId: p.id, priority: p.trendingOrder || idx + 1 }));
+      setTrendingItems(explicit);
+    }
+  }, [trendingConfig, products]);
+
+  // AI Assistant & Knowledge State
+  const [localAIConfig, setLocalAIConfig] = useState<AIKnowledgeConfig>(aiKnowledgeConfig);
+  const [isSavingAI, setIsSavingAI] = useState<boolean>(false);
+  const [newFaqQ, setNewFaqQ] = useState<string>('');
+  const [newFaqA, setNewFaqA] = useState<string>('');
+  const [newSuggestedQ, setNewSuggestedQ] = useState<string>('');
+
+  // Simulator chat for owner to test AI responses live
+  const [simChatMessages, setSimChatMessages] = useState<{ sender: 'ai' | 'owner'; text: string }[]>([
+    {
+      sender: 'ai',
+      text: aiKnowledgeConfig?.assistantPersonality?.welcomeMessage || 'Hello! How can I assist your customers today?',
+    },
+  ]);
+  const [simInput, setSimInput] = useState<string>('');
+
+  useEffect(() => {
+    if (aiKnowledgeConfig) {
+      setLocalAIConfig(aiKnowledgeConfig);
+    }
+  }, [aiKnowledgeConfig]);
 
   // Success Notification Toast
   const [dashboardSuccessMsg, setDashboardSuccessMsg] = useState('');
   const [dashboardErrorMsg, setDashboardErrorMsg] = useState('');
-
-  // Trending Products Management State
-  const [localTrendingIds, setLocalTrendingIds] = useState<string[]>([]);
-  const [trendingSearch, setTrendingSearch] = useState('');
-  const [trendingCategoryFilter, setTrendingCategoryFilter] = useState('all');
-  const [trendingSaving, setTrendingSaving] = useState(false);
-
-  useEffect(() => {
-    setLocalTrendingIds(trendingProductIds || []);
-  }, [trendingProductIds]);
 
   // Product Modal & Image Upload
   const [productModal, setProductModal] = useState<boolean>(false);
@@ -116,7 +176,6 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({ onNavigate }) =>
     brand: '',
     category: 'electronics',
     categories: ['electronics'],
-    categoryIds: ['electronics'],
     sellingPrice: 1999,
     originalPrice: 2999,
     discountPercent: 33,
@@ -130,12 +189,6 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({ onNavigate }) =>
 
   // Multiple category selection state for product
   const [prodCategories, setProdCategories] = useState<string[]>(['electronics']);
-  const [quickCatName, setQuickCatName] = useState('');
-  const [showQuickCat, setShowQuickCat] = useState(false);
-
-  // Extra image management state
-  const [newImageUrl, setNewImageUrl] = useState('');
-  const [uploadingProgress, setUploadingProgress] = useState<number | null>(null);
 
   // Dynamic Variant rows (Left: Name like Size/Color, Right: comma-separated options)
   const [variantRows, setVariantRows] = useState<{ name: string; optionsStr: string }[]>([
@@ -179,6 +232,8 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({ onNavigate }) =>
   const [selectedStatusCol, setSelectedStatusCol] = useState<string>('all');
 
   // Chat direct response
+  const [selectedChatUserId, setSelectedChatUserId] = useState<string>('');
+  const [chatReplyInput, setChatReplyInput] = useState<string>('');
   const [chatReplyText, setChatReplyText] = useState<Record<string, string>>({});
   const [seedingStatus, setSeedingStatus] = useState('');
 
@@ -208,184 +263,38 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({ onNavigate }) =>
     );
   }
 
-  // Image Upload & Gallery Helpers using Firebase Storage
-  const handleProductMainImageFile = async (e: React.ChangeEvent<HTMLInputElement>) => {
+  // File Upload Helper
+  const handleProductMainImageFile = (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
     if (file) {
-      try {
-        setUploadingProgress(10);
-        const url = await uploadImageFile(file, 'products', (prog) => setUploadingProgress(prog));
-        setNewProd((prev) => {
-          const currentImages = prev.images || [];
-          const updatedImages = currentImages.includes(url) ? currentImages : [url, ...currentImages];
-          return {
+      const reader = new FileReader();
+      reader.onloadend = () => {
+        if (typeof reader.result === 'string') {
+          setNewProd((prev) => ({
             ...prev,
-            mainImage: url,
-            images: updatedImages,
-          };
-        });
-        setDashboardSuccessMsg('Main thumbnail uploaded and set successfully!');
-        setTimeout(() => setDashboardSuccessMsg(''), 3000);
-      } catch (err: any) {
-        setDashboardErrorMsg(err.message || 'Failed to upload thumbnail image');
-        setTimeout(() => setDashboardErrorMsg(''), 4000);
-      } finally {
-        setUploadingProgress(null);
-      }
-    }
-  };
-
-  const handleProductExtraImagesMultiple = async (e: React.ChangeEvent<HTMLInputElement>) => {
-    const files = Array.from(e.target.files || []);
-    if (files.length === 0) return;
-
-    try {
-      setUploadingProgress(5);
-      const uploadedUrls: string[] = [];
-      for (let i = 0; i < files.length; i++) {
-        const file = files[i];
-        const url = await uploadImageFile(file, 'products', (prog) => {
-          const overall = Math.round(((i + prog / 100) / files.length) * 100);
-          setUploadingProgress(overall);
-        });
-        uploadedUrls.push(url);
-      }
-
-      setNewProd((prev) => {
-        const existing = prev.images || [];
-        const combined = [...existing, ...uploadedUrls].filter((u, idx, arr) => arr.indexOf(u) === idx);
-        return {
-          ...prev,
-          mainImage: prev.mainImage || combined[0] || '',
-          images: combined,
-        };
-      });
-
-      setDashboardSuccessMsg(`Added ${uploadedUrls.length} image(s) to product gallery!`);
-      setTimeout(() => setDashboardSuccessMsg(''), 3000);
-    } catch (err: any) {
-      setDashboardErrorMsg(err.message || 'Failed to upload images');
-      setTimeout(() => setDashboardErrorMsg(''), 4000);
-    } finally {
-      setUploadingProgress(null);
-    }
-  };
-
-  const handleAddImageUrl = () => {
-    const clean = newImageUrl.trim();
-    if (!clean) return;
-    try {
-      new URL(clean);
-    } catch {
-      setDashboardErrorMsg('Please enter a valid image URL starting with http:// or https://');
-      setTimeout(() => setDashboardErrorMsg(''), 3000);
-      return;
-    }
-
-    setNewProd((prev) => {
-      const existing = prev.images || [];
-      const combined = existing.includes(clean) ? existing : [...existing, clean];
-      return {
-        ...prev,
-        mainImage: prev.mainImage || clean,
-        images: combined,
+            mainImage: reader.result as string,
+            images: prev.images?.length ? [reader.result as string, ...prev.images.slice(1)] : [reader.result as string],
+          }));
+        }
       };
-    });
-    setNewImageUrl('');
-  };
-
-  const handleSetMainThumbnail = (url: string) => {
-    setNewProd((prev) => ({
-      ...prev,
-      mainImage: url,
-    }));
-  };
-
-  const handleRemoveGalleryImage = (urlToRemove: string) => {
-    setNewProd((prev) => {
-      const updated = (prev.images || []).filter((u) => u !== urlToRemove);
-      const newMain = prev.mainImage === urlToRemove ? updated[0] || '' : prev.mainImage;
-      return {
-        ...prev,
-        mainImage: newMain,
-        images: updated,
-      };
-    });
-  };
-
-  const handleReorderGalleryImage = (index: number, direction: 'up' | 'down') => {
-    setNewProd((prev) => {
-      const list = [...(prev.images || [])];
-      const targetIndex = direction === 'up' ? index - 1 : index + 1;
-      if (targetIndex < 0 || targetIndex >= list.length) return prev;
-      const temp = list[index];
-      list[index] = list[targetIndex];
-      list[targetIndex] = temp;
-      return {
-        ...prev,
-        images: list,
-      };
-    });
-  };
-
-  const handleQuickAddCategory = async () => {
-    if (!quickCatName.trim()) return;
-    try {
-      const slug = quickCatName.trim().toLowerCase().replace(/[^a-z0-9]+/g, '-');
-      await addCategory({
-        name: quickCatName.trim(),
-        slug,
-        icon: 'Layers',
-        image: 'https://images.unsplash.com/photo-1441986300917-64674bd600d8?w=400&q=80',
-        subCategories: [],
-        description: 'Product category collection',
-      });
-      setProdCategories((prev) => (prev.includes(slug) ? prev : [...prev, slug]));
-      setQuickCatName('');
-      setShowQuickCat(false);
-      setDashboardSuccessMsg(`Category "${quickCatName}" created and assigned!`);
-      setTimeout(() => setDashboardSuccessMsg(''), 3000);
-    } catch (e: any) {
-      setDashboardErrorMsg(e.message || 'Error creating category');
-      setTimeout(() => setDashboardErrorMsg(''), 4000);
+      reader.readAsDataURL(file);
     }
   };
 
-  // Trending Management Handlers
-  const handleSaveTrendingProducts = async () => {
-    setTrendingSaving(true);
-    try {
-      await updateTrendingProducts(localTrendingIds);
-      setDashboardSuccessMsg(`Trending queue (${localTrendingIds.length} products) saved persistently to Firebase!`);
-      setTimeout(() => setDashboardSuccessMsg(''), 4000);
-    } catch (e: any) {
-      setDashboardErrorMsg(e.message || 'Failed to save trending products');
-      setTimeout(() => setDashboardErrorMsg(''), 4000);
-    } finally {
-      setTrendingSaving(false);
+  const handleProductExtraImageFile = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (file) {
+      const reader = new FileReader();
+      reader.onloadend = () => {
+        if (typeof reader.result === 'string') {
+          setNewProd((prev) => ({
+            ...prev,
+            images: [...(prev.images || []), reader.result as string],
+          }));
+        }
+      };
+      reader.readAsDataURL(file);
     }
-  };
-
-  const handleToggleProductTrending = (productId: string) => {
-    setLocalTrendingIds((prev) =>
-      prev.includes(productId) ? prev.filter((id) => id !== productId) : [...prev, productId]
-    );
-  };
-
-  const handleMoveTrendingItem = (index: number, direction: 'up' | 'down') => {
-    setLocalTrendingIds((prev) => {
-      const list = [...prev];
-      const target = direction === 'up' ? index - 1 : index + 1;
-      if (target < 0 || target >= list.length) return prev;
-      const temp = list[index];
-      list[index] = list[target];
-      list[target] = temp;
-      return list;
-    });
-  };
-
-  const handleRemoveFromTrending = (productId: string) => {
-    setLocalTrendingIds((prev) => prev.filter((id) => id !== productId));
   };
 
   const handleBannerImageFile = (e: React.ChangeEvent<HTMLInputElement>) => {
@@ -404,7 +313,8 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({ onNavigate }) =>
   const handleSaveProduct = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!newProd.name || !newProd.sellingPrice || !newProd.mainImage) {
-      alert('Please provide product title, selling price, and thumbnail image.');
+      setDashboardErrorMsg('Please provide product title, selling price, and thumbnail image.');
+      setTimeout(() => setDashboardErrorMsg(''), 4000);
       return;
     }
 
@@ -430,13 +340,10 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({ onNavigate }) =>
       });
 
       const selectedCats = prodCategories.length ? prodCategories : [newProd.category || 'electronics'];
-      const finalGallery = (newProd.images && newProd.images.length > 0)
-        ? (newProd.images.includes(newProd.mainImage) ? newProd.images : [newProd.mainImage, ...newProd.images])
-        : [newProd.mainImage];
 
       const productPayload = {
         name: newProd.name,
-        slug: newProd.slug || newProd.name.toLowerCase().replace(/[^a-z0-9]+/g, '-'),
+        slug: newProd.name.toLowerCase().replace(/[^a-z0-9]+/g, '-'),
         brand: newProd.brand || 'TrendPro Select',
         category: selectedCats[0] || 'electronics',
         categories: selectedCats,
@@ -444,32 +351,25 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({ onNavigate }) =>
         description: newProd.description || 'Premium quality marketplace product.',
         highlights: newProd.highlights || ['1 Year Brand Warranty', 'Fast Express Dispatch'],
         mainImage: newProd.mainImage,
-        images: finalGallery,
-        originalPrice: newProd.originalPrice || Math.round(newProd.sellingPrice * 1.25),
+        images: newProd.images?.length ? newProd.images : [newProd.mainImage],
+        originalPrice: newProd.originalPrice || newProd.sellingPrice * 1.25,
         sellingPrice: newProd.sellingPrice,
         discountPercent:
-          newProd.originalPrice && newProd.originalPrice > newProd.sellingPrice
-            ? Math.round(((newProd.originalPrice - newProd.sellingPrice) / newProd.originalPrice) * 100)
-            : 0,
-        stock: Number(newProd.stock) >= 0 ? Number(newProd.stock) : 25,
-        rating: editingProductId ? (newProd.rating || 0) : 0,
-        ratingCount: editingProductId ? (newProd.ratingCount || 0) : 0,
-        variants: processedVariants.length ? processedVariants : [],
-        specs: Object.keys(processedSpecs).length ? processedSpecs : {},
+          Math.round(((newProd.originalPrice! - newProd.sellingPrice) / newProd.originalPrice!) * 100) || 15,
+        stock: newProd.stock || 25,
+        rating: newProd.rating || 4.8,
+        ratingCount: newProd.ratingCount || 1,
+        variants: processedVariants.length ? processedVariants : undefined,
+        specs: Object.keys(processedSpecs).length ? processedSpecs : undefined,
         deliveryDays: 8,
         isActive: true,
       };
 
-      // Strip any undefined keys to strictly comply with Firestore requirements
-      const sanitizedPayload = Object.fromEntries(
-        Object.entries(productPayload).filter(([_, v]) => v !== undefined)
-      ) as any;
-
       if (editingProductId) {
-        await updateProduct(editingProductId, sanitizedPayload);
+        await updateProduct(editingProductId, productPayload);
         setDashboardSuccessMsg(`Product "${newProd.name}" updated successfully!`);
       } else {
-        await addProduct(sanitizedPayload);
+        await addProduct(productPayload);
         setDashboardSuccessMsg(`Product "${newProd.name}" published to catalog successfully!`);
       }
 
@@ -491,14 +391,19 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({ onNavigate }) =>
     }
 
     try {
+      const newSlug = newCat.slug.trim() || newCat.name.toLowerCase().replace(/[^a-z0-9]+/g, '-');
       await addCategory({
         name: newCat.name.trim(),
-        slug: newCat.slug.trim() || newCat.name.toLowerCase().replace(/[^a-z0-9]+/g, '-'),
+        slug: newSlug,
         icon: newCat.icon || 'Layers',
         image: 'https://images.unsplash.com/photo-1441986300917-64674bd600d8?w=400&q=80',
         subCategories: [],
         description: newCat.description || 'Marketplace product collection',
       });
+      // If product modal is open, auto-assign the newly created category immediately
+      if (productModal) {
+        setProdCategories((prev) => (prev.includes(newSlug) ? prev : [...prev, newSlug]));
+      }
       setCategoryModal(false);
       setDashboardSuccessMsg(`New Category "${newCat.name}" created and added to store!`);
       setNewCat({ name: '', slug: '', icon: 'Layers', description: '' });
@@ -543,6 +448,178 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({ onNavigate }) =>
     } catch (err: any) {
       setDashboardErrorMsg(err.message || 'Error updating announcement');
       setTimeout(() => setDashboardErrorMsg(''), 5000);
+    }
+  };
+
+  // Trending Products Handlers
+  const handleSaveTrendingOrder = async () => {
+    setIsSavingTrending(true);
+    try {
+      await updateTrendingProducts(trendingItems);
+      setDashboardSuccessMsg('Trending products & display priorities updated successfully in Firebase!');
+      setTimeout(() => setDashboardSuccessMsg(''), 4000);
+    } catch (err: any) {
+      setDashboardErrorMsg(err.message || 'Error updating trending products');
+      setTimeout(() => setDashboardErrorMsg(''), 5000);
+    } finally {
+      setIsSavingTrending(false);
+    }
+  };
+
+  const toggleTrendingProduct = (productId: string) => {
+    setTrendingItems((prev) => {
+      const exists = prev.find((t) => t.productId === productId);
+      if (exists) {
+        return prev.filter((t) => t.productId !== productId);
+      } else {
+        const nextPriority = prev.length + 1;
+        return [...prev, { productId, priority: nextPriority }];
+      }
+    });
+  };
+
+  const changeTrendingPriority = (productId: string, newPriority: number) => {
+    const p = Math.max(1, newPriority);
+    setTrendingItems((prev) =>
+      prev.map((item) => (item.productId === productId ? { ...item, priority: p } : item))
+    );
+  };
+
+  const moveTrendingItem = (index: number, direction: 'up' | 'down') => {
+    const targetIndex = direction === 'up' ? index - 1 : index + 1;
+    if (targetIndex < 0 || targetIndex >= trendingItems.length) return;
+
+    const list = [...trendingItems].sort((a, b) => a.priority - b.priority);
+    const temp = list[index];
+    list[index] = list[targetIndex];
+    list[targetIndex] = temp;
+
+    // Renumber priorities sequentially
+    const renumbered = list.map((item, idx) => ({ ...item, priority: idx + 1 }));
+    setTrendingItems(renumbered);
+  };
+
+  // AI Knowledge Handlers
+  const handleSaveAIKnowledge = async () => {
+    setIsSavingAI(true);
+    try {
+      await updateAIKnowledge(localAIConfig);
+      setDashboardSuccessMsg('AI Assistant personality, policies & FAQs updated successfully in Firebase!');
+      setTimeout(() => setDashboardSuccessMsg(''), 4000);
+    } catch (err: any) {
+      setDashboardErrorMsg(err.message || 'Error updating AI knowledge');
+      setTimeout(() => setDashboardErrorMsg(''), 5000);
+    } finally {
+      setIsSavingAI(false);
+    }
+  };
+
+  const handleAddFaq = () => {
+    if (!newFaqQ.trim() || !newFaqA.trim()) return;
+    setLocalAIConfig((prev) => ({
+      ...prev,
+      faqs: [...(prev.faqs || []), { question: newFaqQ.trim(), answer: newFaqA.trim() }],
+    }));
+    setNewFaqQ('');
+    setNewFaqA('');
+  };
+
+  const handleDeleteFaq = (index: number) => {
+    setLocalAIConfig((prev) => ({
+      ...prev,
+      faqs: prev.faqs.filter((_, idx) => idx !== index),
+    }));
+  };
+
+  const handleAddSuggestedQuestion = () => {
+    if (!newSuggestedQ.trim()) return;
+    setLocalAIConfig((prev) => ({
+      ...prev,
+      assistantPersonality: {
+        ...prev.assistantPersonality,
+        suggestedQuestions: [
+          ...(prev.assistantPersonality.suggestedQuestions || []),
+          newSuggestedQ.trim(),
+        ],
+      },
+    }));
+    setNewSuggestedQ('');
+  };
+
+  const handleRemoveSuggestedQuestion = (index: number) => {
+    setLocalAIConfig((prev) => ({
+      ...prev,
+      assistantPersonality: {
+        ...prev.assistantPersonality,
+        suggestedQuestions: prev.assistantPersonality.suggestedQuestions.filter((_, idx) => idx !== index),
+      },
+    }));
+  };
+
+  // Simulator Test Message Sender
+  const handleSimSendMessage = (textToSend?: string) => {
+    const q = (textToSend || simInput).trim();
+    if (!q) return;
+
+    setSimChatMessages((prev) => [...prev, { sender: 'owner', text: q }]);
+    if (!textToSend) setSimInput('');
+
+    setTimeout(() => {
+      const lower = q.toLowerCase();
+      let answer = '';
+
+      if (lower.includes('return') || lower.includes('refund')) {
+        answer = localAIConfig.returnRefundPolicy;
+      } else if (lower.includes('ship') || lower.includes('deliver') || lower.includes('hub')) {
+        answer = `${localAIConfig.shippingPolicy} (Dispatch hub: ${localAIConfig.dispatchHubAddress})`;
+      } else if (lower.includes('coupon') || lower.includes('discount')) {
+        answer = `${localAIConfig.couponRules} Active vouchers available in store!`;
+      } else if (lower.includes('wallet')) {
+        answer = localAIConfig.walletInstructions;
+      } else {
+        const matched = localAIConfig.faqs?.find((f) =>
+          f.question.toLowerCase().split(' ').some((w) => w.length > 3 && lower.includes(w))
+        );
+        if (matched) {
+          answer = matched.answer;
+        } else {
+          answer = `I am ${localAIConfig.assistantPersonality.name}. I can guide you through products, check orders, explain our 7-day return policy, or connect you with the store owner!`;
+        }
+      }
+
+      setSimChatMessages((prev) => [...prev, { sender: 'ai', text: answer }]);
+    }, 400);
+  };
+
+  // MASTER SET Execution
+  const handleExecuteMasterSet = async () => {
+    setIsSavingMasterSet(true);
+    setDashboardErrorMsg('');
+    try {
+      const res = await saveMasterSet({
+        websiteConfig,
+        aiKnowledge: localAIConfig,
+        announcement: localAnnouncement,
+        trendingItems,
+        banners,
+        vouchers,
+        categories,
+        products,
+      });
+
+      setMasterSetResult(res);
+      if (res.success) {
+        setDashboardSuccessMsg(
+          `Master Set Revision #${res.revision} published live to store! All configurations updated.`
+        );
+        setTimeout(() => setDashboardSuccessMsg(''), 7000);
+      } else {
+        setDashboardErrorMsg(`Master Set published with some warnings. Please check the summary.`);
+      }
+    } catch (err: any) {
+      setDashboardErrorMsg(err.message || 'Error executing Master Set');
+    } finally {
+      setIsSavingMasterSet(false);
     }
   };
 
@@ -629,6 +706,82 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({ onNavigate }) =>
   const pendingCancels = orders.filter((o) => o.cancelRequest?.status === 'pending');
   const pendingReturns = orders.filter((o) => o.returnRequest?.status === 'pending');
 
+  // Customer Conversations for Owner Inbox
+  const customerInboxMap = new Map<
+    string,
+    {
+      userId: string;
+      customerId: string;
+      userName: string;
+      userEmail: string;
+      lastMessage: string;
+      lastMessageAt: string;
+      unreadCount: number;
+      orderId?: string;
+      messages: typeof supportMessages;
+    }
+  >();
+
+  for (const m of supportMessages) {
+    const isFromCustomer = m.sender === 'customer';
+    const isUnread = isFromCustomer && !m.isRead;
+    const existing = customerInboxMap.get(m.userId);
+    if (!existing) {
+      customerInboxMap.set(m.userId, {
+        userId: m.userId,
+        customerId: m.customerId || `CUST-${m.userId.slice(-6).toUpperCase()}`,
+        userName: isFromCustomer ? m.userName : (m.userName !== 'TrendPro Store Owner' ? m.userName : 'Customer'),
+        userEmail: isFromCustomer ? m.userEmail : (m.userEmail !== OWNER_EMAIL ? m.userEmail : ''),
+        lastMessage: m.message || (m.imageUrl ? '📷 [Image Attachment]' : 'Message'),
+        lastMessageAt: m.createdAt,
+        unreadCount: isUnread ? 1 : 0,
+        orderId: m.orderId,
+        messages: [m],
+      });
+    } else {
+      existing.messages.push(m);
+      if (isFromCustomer) {
+        if (m.userName && m.userName !== 'Customer') existing.userName = m.userName;
+        if (m.userEmail) existing.userEmail = m.userEmail;
+      }
+      if (new Date(m.createdAt).getTime() > new Date(existing.lastMessageAt).getTime()) {
+        existing.lastMessage = m.message || (m.imageUrl ? '📷 [Image Attachment]' : 'Message');
+        existing.lastMessageAt = m.createdAt;
+        if (m.orderId) existing.orderId = m.orderId;
+      }
+      if (isUnread) existing.unreadCount += 1;
+    }
+  }
+
+  for (const c of chats) {
+    if (!c.customerUid || c.customerUid === currentUser?.uid) continue;
+    const existing = customerInboxMap.get(c.customerUid);
+    if (!existing) {
+      customerInboxMap.set(c.customerUid, {
+        userId: c.customerUid,
+        customerId: c.customerId || `CUST-${c.customerUid.slice(-6).toUpperCase()}`,
+        userName: c.customerName || 'Customer',
+        userEmail: c.customerEmail || '',
+        lastMessage: c.lastMessage || 'Active chat',
+        lastMessageAt: c.lastMessageAt || c.updatedAt || new Date().toISOString(),
+        unreadCount: c.unreadByOwner ? 1 : 0,
+        orderId: c.orderId,
+        messages: [],
+      });
+    } else {
+      if (c.customerName && c.customerName !== 'Customer') existing.userName = c.customerName;
+      if (c.customerEmail) existing.userEmail = c.customerEmail;
+      if (c.unreadByOwner) existing.unreadCount = Math.max(existing.unreadCount, 1);
+    }
+  }
+
+  const customerConversations = Array.from(customerInboxMap.values()).sort(
+    (a, b) => new Date(b.lastMessageAt).getTime() - new Date(a.lastMessageAt).getTime()
+  );
+
+  const totalUnreadSupport = customerConversations.reduce((acc, c) => acc + c.unreadCount, 0);
+  const activeConversationUser = customerConversations.find((c) => c.userId === selectedChatUserId) || customerConversations[0];
+
   const filteredOrders =
     selectedStatusCol === 'all'
       ? orders
@@ -679,6 +832,42 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({ onNavigate }) =>
         </div>
       </div>
 
+      {/* MASTER SET — CONFIRM ALL CHANGES PROMINENT OWNER BANNER */}
+      <div className="bg-gradient-to-r from-amber-500 via-orange-500 to-amber-600 rounded-3xl p-5 sm:p-6 text-slate-950 flex flex-col md:flex-row items-center justify-between gap-5 shadow-2xl border-2 border-amber-300">
+        <div className="flex items-center gap-4">
+          <div className="p-3 bg-slate-950 text-amber-400 rounded-2xl shadow-lg shrink-0">
+            <Sparkles className="w-7 h-7 animate-pulse" />
+          </div>
+          <div>
+            <div className="flex flex-wrap items-center gap-2">
+              <span className="text-[11px] font-black uppercase tracking-wider bg-slate-950 text-amber-300 px-2.5 py-0.5 rounded-lg">
+                Production Rev #{websiteConfig.revision || 1}
+              </span>
+              <span className="text-xs font-bold text-slate-950 bg-white/40 px-2.5 py-0.5 rounded-lg">
+                Published: {websiteConfig.updatedAt ? new Date(websiteConfig.updatedAt).toLocaleString() : 'Active'}
+              </span>
+            </div>
+            <h2 className="text-lg sm:text-xl font-black text-slate-950 mt-1">
+              Owner Master Set Control Centre
+            </h2>
+            <p className="text-xs font-semibold text-slate-950/85">
+              Review, validate, and permanently publish all draft configs, banners, trending ranks, and assistant knowledge directly to Firebase.
+            </p>
+          </div>
+        </div>
+
+        <button
+          onClick={() => {
+            setMasterSetResult(null);
+            setShowMasterSetModal(true);
+          }}
+          className="bg-slate-950 hover:bg-slate-900 text-amber-400 font-black text-xs sm:text-sm px-6 py-3.5 rounded-2xl shadow-2xl transition-all active:scale-95 flex items-center gap-2.5 cursor-pointer border border-amber-400/40 whitespace-nowrap hover:shadow-amber-500/20"
+        >
+          <Sparkles className="w-5 h-5 text-amber-400 animate-spin [animation-duration:4s]" />
+          <span>MASTER SET — CONFIRM ALL CHANGES</span>
+        </button>
+      </div>
+
       {dashboardSuccessMsg && (
         <div className="p-4 bg-emerald-50 border border-emerald-300 text-emerald-800 text-xs font-bold rounded-2xl flex items-center justify-between shadow-xs animate-in fade-in slide-in-from-top-2">
           <div className="flex items-center gap-2">
@@ -716,16 +905,45 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({ onNavigate }) =>
           { id: 'overview', label: 'Overview Metrics' },
           { id: 'orders', label: `Orders (${orders.length})` },
           { id: 'products', label: `Products (${products.length})` },
-          { id: 'trending', label: `🔥 Trending (${localTrendingIds.length})` },
+          {
+            id: 'trending',
+            label: (
+              <span className="flex items-center gap-1.5">
+                <Flame className="w-3.5 h-3.5 text-amber-500 fill-amber-500" />
+                <span>Trending Deals ({trendingItems.length})</span>
+              </span>
+            ),
+          },
           { id: 'banners', label: `Banners (${banners.length})` },
           { id: 'announcement', label: 'Offer Header Bar' },
-          { id: 'support', label: `Customer Chat (${supportMessages.length})` },
+          {
+            id: 'support',
+            label: (
+              <span className="flex items-center gap-1.5">
+                <span>Customer Inquiries ({customerConversations.length})</span>
+                {totalUnreadSupport > 0 && (
+                  <span className="bg-rose-500 text-white text-[10px] px-1.5 py-0.2 rounded-full font-bold animate-pulse">
+                    {totalUnreadSupport} new
+                  </span>
+                )}
+              </span>
+            ),
+          },
           { id: 'vouchers', label: `Vouchers (${vouchers.length})` },
+          {
+            id: 'assistant',
+            label: (
+              <span className="flex items-center gap-1.5">
+                <Bot className="w-3.5 h-3.5 text-indigo-500" />
+                <span>AI Assistant & Knowledge</span>
+              </span>
+            ),
+          },
         ].map((tab) => (
           <button
             key={tab.id}
             onClick={() => setActiveTab(tab.id as any)}
-            className={`px-4 py-2 rounded-xl transition-all whitespace-nowrap ${
+            className={`px-4 py-2 rounded-xl transition-all whitespace-nowrap cursor-pointer ${
               activeTab === tab.id
                 ? 'bg-indigo-600 text-white shadow-xs'
                 : 'text-slate-600 hover:bg-slate-100'
@@ -739,7 +957,7 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({ onNavigate }) =>
       {/* TAB 1: OVERVIEW */}
       {activeTab === 'overview' && (
         <div className="space-y-8">
-          <div className="grid grid-cols-2 lg:grid-cols-4 gap-4 sm:gap-6">
+          <div className="grid grid-cols-2 lg:grid-cols-5 gap-4 sm:gap-6">
             <div className="bg-white p-5 rounded-2xl border border-slate-200 shadow-xs">
               <span className="text-[11px] font-bold text-slate-400 uppercase tracking-wider block">
                 Total Realized Revenue
@@ -762,6 +980,26 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({ onNavigate }) =>
               <span className="text-[10px] text-amber-700 font-bold mt-1 inline-block">
                 {pendingCancels.length} cancel + {pendingReturns.length} return requests
               </span>
+            </div>
+
+            <div className="bg-white p-5 rounded-2xl border border-slate-200 shadow-xs">
+              <span className="text-[11px] font-bold text-slate-400 uppercase tracking-wider block">
+                Customer Inquiries
+              </span>
+              <p className="text-2xl font-black text-slate-900 mt-1 flex items-center gap-1.5">
+                <span>{customerConversations.length}</span>
+                {totalUnreadSupport > 0 && (
+                  <span className="text-[11px] font-bold bg-rose-50 text-rose-700 border border-rose-200 px-2 py-0.5 rounded-full">
+                    {totalUnreadSupport} unread
+                  </span>
+                )}
+              </p>
+              <button
+                onClick={() => setActiveTab('support')}
+                className="text-[10px] text-indigo-600 hover:text-indigo-800 font-bold mt-1 inline-block cursor-pointer"
+              >
+                Open Live Inbox →
+              </button>
             </div>
 
             <div className="bg-white p-5 rounded-2xl border border-slate-200 shadow-xs">
@@ -1131,21 +1369,22 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({ onNavigate }) =>
                         <span className="text-[10px] text-slate-400">{p.brand}</span>
                       </div>
                     </td>
-                    <td className="p-3 capitalize text-slate-600">{p.category}</td>
+                    <td className="p-3 capitalize text-slate-600">
+                      {(p.categoryIds && p.categoryIds.length > 0)
+                        ? p.categoryIds.join(', ')
+                        : (p.categories?.join(', ') || p.category)}
+                    </td>
                     <td className="p-3 font-bold text-slate-900">₹{p.sellingPrice.toLocaleString()}</td>
                     <td className="p-3 font-bold text-slate-700">{p.stock} units</td>
                     <td className="p-3 text-right space-x-2">
                       <button
                         onClick={() => {
                           setEditingProductId(p.id);
-                          const existingImages = p.images && p.images.length > 0
-                            ? p.images
-                            : (p.mainImage ? [p.mainImage] : []);
-                          setNewProd({
-                            ...p,
-                            images: existingImages,
-                          });
-                          setProdCategories(p.categories?.length ? p.categories : [p.category]);
+                          setNewProd(p);
+                          const initialCats = p.categoryIds?.length
+                            ? p.categoryIds
+                            : (p.categories?.length ? p.categories : [p.category]);
+                          setProdCategories(initialCats);
                           if (p.variants && p.variants.length > 0) {
                             setVariantRows(
                               p.variants.map((v) => ({
@@ -1190,293 +1429,7 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({ onNavigate }) =>
         </div>
       )}
 
-      {/* TAB: OWNER-CONTROLLED TRENDING PRODUCTS */}
-      {activeTab === 'trending' && (
-        <div className="space-y-8">
-          <div className="flex flex-col sm:flex-row sm:items-center justify-between pb-4 border-b border-slate-200 gap-4">
-            <div>
-              <div className="flex items-center gap-2">
-                <Flame className="w-5 h-5 text-amber-500 fill-amber-500" />
-                <h2 className="text-lg font-bold text-slate-900">Trending Products Manager</h2>
-              </div>
-              <p className="text-xs text-slate-500 mt-1">
-                Only products you explicitly select below appear in the Homepage Trending section and /trending route. Order them to control priority.
-              </p>
-            </div>
-
-            <button
-              onClick={handleSaveTrendingProducts}
-              disabled={trendingSaving}
-              className="bg-amber-500 hover:bg-amber-600 text-slate-950 text-xs font-black px-5 py-2.5 rounded-xl shadow-md flex items-center gap-2 transition-all active:scale-95 disabled:opacity-50 cursor-pointer self-start sm:self-auto"
-            >
-              {trendingSaving ? (
-                <>
-                  <Loader2 className="w-4 h-4 animate-spin" />
-                  <span>Saving to Firebase...</span>
-                </>
-              ) : (
-                <>
-                  <Check className="w-4 h-4" />
-                  <span>Save Trending ({localTrendingIds.length} Selected)</span>
-                </>
-              )}
-            </button>
-          </div>
-
-          {/* Section 1: Selected Trending Products in Order */}
-          <div className="bg-white rounded-3xl border border-slate-200 p-5 sm:p-6 shadow-xs space-y-4">
-            <div className="flex items-center justify-between">
-              <div>
-                <h3 className="text-sm font-bold text-slate-900 uppercase tracking-wider">
-                  Active Trending Queue ({localTrendingIds.length} Products)
-                </h3>
-                <p className="text-[11px] text-slate-500">
-                  Top items appear first on the homepage. Use arrows to reorder position.
-                </p>
-              </div>
-              {localTrendingIds.length > 0 && (
-                <button
-                  onClick={() => setLocalTrendingIds([])}
-                  className="text-xs text-rose-600 font-semibold hover:underline cursor-pointer"
-                >
-                  Clear All
-                </button>
-              )}
-            </div>
-
-            {localTrendingIds.length > 0 ? (
-              <div className="space-y-2.5">
-                {localTrendingIds.map((id, index) => {
-                  const prod = products.find((p) => p.id === id);
-                  if (!prod) return null;
-
-                  return (
-                    <div
-                      key={id}
-                      className="flex items-center justify-between p-3 rounded-2xl border border-slate-200 bg-slate-50 hover:bg-slate-100/80 transition-colors gap-3"
-                    >
-                      <div className="flex items-center gap-3 min-w-0">
-                        <span className="w-7 h-7 rounded-xl bg-amber-400 text-slate-950 font-black text-xs flex items-center justify-center shrink-0 shadow-xs">
-                          #{index + 1}
-                        </span>
-                        <img
-                          src={prod.mainImage}
-                          alt={prod.name}
-                          className="w-12 h-12 object-contain rounded-xl bg-white p-1 border border-slate-200 shrink-0"
-                        />
-                        <div className="min-w-0">
-                          <p className="font-bold text-xs text-slate-900 truncate">{prod.name}</p>
-                          <div className="flex items-center gap-2 text-[11px] text-slate-500">
-                            <span>{prod.brand}</span>
-                            <span>•</span>
-                            <span className="capitalize">{prod.category}</span>
-                            <span>•</span>
-                            <span className="font-bold text-slate-800">₹{prod.sellingPrice.toLocaleString()}</span>
-                            <span>•</span>
-                            <span className={prod.stock > 0 ? 'text-emerald-600 font-semibold' : 'text-rose-600 font-semibold'}>
-                              {prod.stock > 0 ? `${prod.stock} in stock` : 'Out of Stock'}
-                            </span>
-                          </div>
-                        </div>
-                      </div>
-
-                      <div className="flex items-center gap-1.5 shrink-0">
-                        <button
-                          onClick={() => handleMoveTrendingItem(index, 'up')}
-                          disabled={index === 0}
-                          className="p-1.5 rounded-lg bg-white border border-slate-200 hover:bg-slate-50 text-slate-700 disabled:opacity-30 cursor-pointer"
-                          title="Move Up"
-                        >
-                          <ArrowUp className="w-3.5 h-3.5" />
-                        </button>
-                        <button
-                          onClick={() => handleMoveTrendingItem(index, 'down')}
-                          disabled={index === localTrendingIds.length - 1}
-                          className="p-1.5 rounded-lg bg-white border border-slate-200 hover:bg-slate-50 text-slate-700 disabled:opacity-30 cursor-pointer"
-                          title="Move Down"
-                        >
-                          <ArrowDown className="w-3.5 h-3.5" />
-                        </button>
-                        <button
-                          onClick={() => handleRemoveFromTrending(id)}
-                          className="p-1.5 rounded-lg bg-white border border-rose-200 hover:bg-rose-50 text-rose-600 cursor-pointer"
-                          title="Remove from Trending"
-                        >
-                          <X className="w-3.5 h-3.5" />
-                        </button>
-                      </div>
-                    </div>
-                  );
-                })}
-              </div>
-            ) : (
-              <div className="p-8 text-center bg-slate-50 rounded-2xl border border-dashed border-slate-200">
-                <Flame className="w-8 h-8 text-slate-300 mx-auto mb-2" />
-                <p className="text-xs font-bold text-slate-600">No trending products selected</p>
-                <p className="text-[11px] text-slate-400 mt-0.5">
-                  Browse products in the catalog browser below and check the boxes to designate them as trending.
-                </p>
-              </div>
-            )}
-          </div>
-
-          {/* Section 2: Live Homepage Trending Preview */}
-          {localTrendingIds.length > 0 && (
-            <div className="bg-slate-900 rounded-3xl p-6 text-white space-y-4 shadow-xl">
-              <div className="flex items-center justify-between pb-3 border-b border-slate-800">
-                <div className="flex items-center gap-2">
-                  <Eye className="w-4 h-4 text-amber-400" />
-                  <span className="text-xs font-bold uppercase tracking-wider text-amber-400">
-                    Live Homepage Trending Preview
-                  </span>
-                </div>
-                <span className="text-[11px] text-slate-400">
-                  {localTrendingIds.length} item(s) will render on storefront
-                </span>
-              </div>
-
-              <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-4 gap-4">
-                {localTrendingIds.slice(0, 4).map((id, idx) => {
-                  const prod = products.find((p) => p.id === id);
-                  if (!prod) return null;
-                  return (
-                    <div key={id} className="bg-white text-slate-900 rounded-2xl p-3 flex flex-col justify-between border border-slate-700 shadow-md">
-                      <div>
-                        <div className="relative aspect-square w-full bg-slate-50 rounded-xl overflow-hidden p-2 mb-2 flex items-center justify-center">
-                          <img src={prod.mainImage} alt={prod.name} className="w-full h-full object-contain mix-blend-multiply" />
-                          <span className="absolute top-2 left-2 bg-amber-400 text-slate-950 font-black text-[10px] px-2 py-0.5 rounded-md shadow-xs">
-                            #{idx + 1}
-                          </span>
-                        </div>
-                        <p className="font-bold text-xs line-clamp-1">{prod.name}</p>
-                        <p className="text-[10px] text-slate-400">{prod.brand}</p>
-                      </div>
-                      <div className="pt-2 mt-2 border-t border-slate-100 flex items-center justify-between">
-                        <span className="font-black text-sm">₹{prod.sellingPrice.toLocaleString()}</span>
-                        <StarRating rating={prod.rating || 0} reviewCount={prod.ratingCount} size="xs" showBadge={true} />
-                      </div>
-                    </div>
-                  );
-                })}
-              </div>
-            </div>
-          )}
-
-          {/* Section 3: Product Catalog Browser for Trending */}
-          <div className="bg-white rounded-3xl border border-slate-200 p-5 sm:p-6 shadow-xs space-y-4">
-            <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 pb-3 border-b border-slate-100">
-              <div>
-                <h3 className="text-sm font-bold text-slate-900 uppercase tracking-wider">
-                  Browse & Add Store Products to Trending
-                </h3>
-                <p className="text-[11px] text-slate-500">
-                  Click on any checkbox or row to toggle product in the Trending queue.
-                </p>
-              </div>
-
-              <div className="flex items-center gap-2">
-                <input
-                  type="text"
-                  placeholder="Search products..."
-                  value={trendingSearch}
-                  onChange={(e) => setTrendingSearch(e.target.value)}
-                  className="bg-slate-50 border border-slate-200 text-xs rounded-xl px-3 py-2 outline-hidden focus:border-indigo-500 w-48"
-                />
-                <select
-                  value={trendingCategoryFilter}
-                  onChange={(e) => setTrendingCategoryFilter(e.target.value)}
-                  className="bg-slate-50 border border-slate-200 text-xs rounded-xl px-3 py-2 outline-hidden focus:border-indigo-500 cursor-pointer"
-                >
-                  <option value="all">All Categories</option>
-                  {categories.map((c) => (
-                    <option key={c.id} value={c.slug}>
-                      {c.name}
-                    </option>
-                  ))}
-                </select>
-              </div>
-            </div>
-
-            <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-3 max-h-[600px] overflow-y-auto pr-1">
-              {products
-                .filter((p) => {
-                  if (trendingSearch.trim()) {
-                    const q = trendingSearch.toLowerCase();
-                    const match =
-                      p.name.toLowerCase().includes(q) ||
-                      p.brand.toLowerCase().includes(q) ||
-                      (p.sku && p.sku.toLowerCase().includes(q));
-                    if (!match) return false;
-                  }
-                  if (trendingCategoryFilter !== 'all') {
-                    const cat = trendingCategoryFilter.toLowerCase();
-                    const matchesCat =
-                      p.category?.toLowerCase() === cat ||
-                      (p.categories && p.categories.some((c) => c.toLowerCase() === cat)) ||
-                      (p.categoryIds && p.categoryIds.some((c) => c.toLowerCase() === cat));
-                    if (!matchesCat) return false;
-                  }
-                  return true;
-                })
-                .map((p) => {
-                  const isTrending = localTrendingIds.includes(p.id);
-                  const trendIndex = localTrendingIds.indexOf(p.id);
-
-                  return (
-                    <div
-                      key={p.id}
-                      onClick={() => handleToggleProductTrending(p.id)}
-                      className={`p-3 rounded-2xl border transition-all cursor-pointer flex items-center gap-3 ${
-                        isTrending
-                          ? 'bg-amber-50/80 border-amber-300 ring-1 ring-amber-300/50 shadow-xs'
-                          : 'bg-white border-slate-200 hover:border-slate-300 hover:shadow-xs'
-                      }`}
-                    >
-                      <button
-                        type="button"
-                        onClick={(e) => {
-                          e.stopPropagation();
-                          handleToggleProductTrending(p.id);
-                        }}
-                        className="cursor-pointer"
-                      >
-                        {isTrending ? (
-                          <CheckSquare className="w-5 h-5 text-amber-600 fill-amber-100" />
-                        ) : (
-                          <Square className="w-5 h-5 text-slate-300" />
-                        )}
-                      </button>
-
-                      <img
-                        src={p.mainImage}
-                        alt={p.name}
-                        className="w-12 h-12 object-contain rounded-xl bg-slate-50 p-1 border border-slate-100 shrink-0"
-                      />
-
-                      <div className="flex-1 min-w-0">
-                        <div className="flex items-center gap-1.5">
-                          <p className="font-bold text-xs text-slate-900 truncate">{p.name}</p>
-                          {isTrending && (
-                            <span className="bg-amber-400 text-slate-950 font-black text-[9px] px-1.5 py-0.5 rounded-full shrink-0">
-                              #{trendIndex + 1}
-                            </span>
-                          )}
-                        </div>
-                        <div className="flex items-center gap-2 text-[10px] text-slate-400 mt-0.5">
-                          <span>{p.brand}</span>
-                          <span>•</span>
-                          <span>₹{p.sellingPrice.toLocaleString()}</span>
-                          <span>•</span>
-                          <span>{p.stock} units</span>
-                        </div>
-                      </div>
-                    </div>
-                  );
-                })}
-            </div>
-          </div>
-        </div>
-      )}
+      {/* TAB 4: HERO BANNERS (FROM FILE + REDIRECT LINK) */}
       {activeTab === 'banners' && (
         <div className="space-y-4">
           <div className="flex justify-between items-center">
@@ -1625,79 +1578,242 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({ onNavigate }) =>
       {/* TAB 6: SUPPORT CHAT WITH WALLET CREDIT */}
       {activeTab === 'support' && (
         <div className="space-y-4">
-          <div className="flex justify-between items-center">
+          <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
             <div>
-              <h2 className="text-base font-bold text-slate-900">Direct Customer Chat Messages</h2>
+              <h2 className="text-base font-bold text-slate-900 flex items-center gap-2">
+                <MessageSquare className="w-5 h-5 text-indigo-600" />
+                Customer Support Inbox & Live Chat Control
+              </h2>
               <p className="text-xs text-slate-500">
-                Reply to customer messages directly without bot interference. Credit wallet funds directly from chat.
+                Direct cross-device real-time communication between store owner and authenticated customers.
               </p>
             </div>
             <button
-              onClick={() => onNavigate('support')}
-              className="bg-indigo-600 text-white text-xs font-bold px-4 py-2 rounded-xl"
+              onClick={() => onNavigate('support', activeConversationUser ? { userId: activeConversationUser.userId, orderId: activeConversationUser.orderId } : undefined)}
+              className="bg-indigo-600 hover:bg-indigo-700 text-white text-xs font-bold px-4 py-2.5 rounded-xl shadow-md flex items-center gap-2 self-start sm:self-auto transition-all cursor-pointer active:scale-95"
             >
-              Open Full Chat Center
+              <Headphones className="w-4 h-4" />
+              <span>Open Dedicated Chat Center</span>
             </button>
           </div>
 
-          <div className="space-y-3">
-            {supportMessages.map((msg) => (
-              <div key={msg.id} className="bg-white rounded-2xl border border-slate-200 p-4 space-y-2 text-xs">
-                <div className="flex justify-between items-center">
-                  <div>
-                    <span className="font-bold text-slate-900">{msg.userName}</span>
-                    <span className="text-indigo-600 font-mono font-bold ml-2">{msg.customerId}</span>
-                    {msg.orderId && (
-                      <span className="ml-2 bg-amber-50 text-amber-800 px-2 py-0.5 rounded font-mono font-bold">
-                        Ref Order #{msg.orderId}
-                      </span>
-                    )}
-                  </div>
-                  <span className="text-[10px] text-slate-400">
-                    {new Date(msg.createdAt).toLocaleString()}
+          {customerConversations.length === 0 ? (
+            <div className="bg-white rounded-3xl border border-slate-200 p-12 text-center shadow-xs">
+              <Headphones className="w-12 h-12 text-slate-300 mx-auto mb-3" />
+              <h3 className="text-sm font-bold text-slate-800">No customer inquiries received yet</h3>
+              <p className="text-xs text-slate-400 mt-1 max-w-sm mx-auto">
+                When a customer starts a chat from their mobile or browser, their conversation will appear here in real time.
+              </p>
+            </div>
+          ) : (
+            <div className="grid grid-cols-1 lg:grid-cols-12 gap-6">
+              {/* Left Column: Conversations List (5 cols) */}
+              <div className="lg:col-span-5 bg-white rounded-3xl border border-slate-200 p-4 space-y-3 shadow-xs">
+                <div className="flex items-center justify-between pb-2 border-b border-slate-100">
+                  <span className="text-xs font-bold text-slate-600 uppercase tracking-wider">
+                    Conversations ({customerConversations.length})
                   </span>
+                  {totalUnreadSupport > 0 && (
+                    <span className="bg-rose-50 text-rose-700 border border-rose-200 text-[10px] font-bold px-2 py-0.5 rounded-full">
+                      {totalUnreadSupport} unread
+                    </span>
+                  )}
                 </div>
-                <p className="bg-slate-50 p-3 rounded-xl text-slate-700">{msg.message}</p>
-                <div className="flex gap-2 pt-1">
-                  <input
-                    type="text"
-                    placeholder="Type official reply as store owner..."
-                    value={chatReplyText[msg.id] || ''}
-                    onChange={(e) => setChatReplyText({ ...chatReplyText, [msg.id]: e.target.value })}
-                    className="flex-1 bg-slate-50 border border-slate-200 rounded-xl px-3 py-1.5 outline-hidden"
-                  />
-                  <button
-                    onClick={async () => {
-                      const reply = chatReplyText[msg.id];
-                      if (reply) {
-                        try {
-                          await replySupportMessage(msg.userId, reply, msg.orderId);
-                          setChatReplyText({ ...chatReplyText, [msg.id]: '' });
-                          setDashboardSuccessMsg('Reply sent to customer successfully!');
-                          setTimeout(() => setDashboardSuccessMsg(''), 4000);
-                        } catch (err: any) {
-                          setDashboardErrorMsg(err.message || 'Error sending reply');
-                          setTimeout(() => setDashboardErrorMsg(''), 4000);
-                        }
-                      }
-                    }}
-                    className="bg-indigo-600 hover:bg-indigo-700 text-white font-bold px-4 py-1.5 rounded-xl shadow-xs cursor-pointer"
-                  >
-                    Reply
-                  </button>
-                  <button
-                    onClick={() => {
-                      onNavigate('support', { userId: msg.userId, orderId: msg.orderId });
-                    }}
-                    className="bg-emerald-600 hover:bg-emerald-700 text-white font-bold px-3 py-1.5 rounded-xl shadow-xs flex items-center gap-1 cursor-pointer"
-                    title="Open live chat to credit wallet or attach images"
-                  >
-                    <Wallet className="w-3.5 h-3.5" /> Open Chat & Credit
-                  </button>
+
+                <div className="space-y-2 max-h-[500px] overflow-y-auto pr-1">
+                  {customerConversations.map((cust) => {
+                    const isSelected = activeConversationUser?.userId === cust.userId;
+                    return (
+                      <button
+                        key={cust.userId}
+                        onClick={() => {
+                          setSelectedChatUserId(cust.userId);
+                          markChatMessagesAsRead(cust.userId, 'owner');
+                        }}
+                        className={`w-full text-left p-3.5 rounded-2xl transition-all cursor-pointer relative ${
+                          isSelected
+                            ? 'bg-indigo-600 text-white shadow-md'
+                            : 'bg-slate-50 hover:bg-slate-100 text-slate-700'
+                        }`}
+                      >
+                        <div className="flex items-center justify-between">
+                          <p className="font-bold text-xs truncate max-w-[180px]">{cust.userName}</p>
+                          {cust.unreadCount > 0 && !isSelected && (
+                            <span className="bg-rose-500 text-white text-[10px] font-bold px-1.5 py-0.5 rounded-full animate-pulse">
+                              {cust.unreadCount} new
+                            </span>
+                          )}
+                        </div>
+
+                        <div className="flex justify-between items-center text-[10px] opacity-80 mt-1">
+                          <span className="font-mono">{cust.customerId}</span>
+                          <span className="truncate max-w-[130px]">{cust.userEmail}</span>
+                        </div>
+
+                        <p className={`text-[11px] truncate mt-1.5 ${isSelected ? 'text-indigo-100' : 'text-slate-500'}`}>
+                          {cust.lastMessage}
+                        </p>
+
+                        <div className="flex justify-between items-center text-[9px] mt-2 pt-1 border-t border-black/5 opacity-70">
+                          {cust.orderId ? (
+                            <span className="font-mono font-bold">Ref Order #{cust.orderId}</span>
+                          ) : (
+                            <span>General Inquiry</span>
+                          )}
+                          <span>{new Date(cust.lastMessageAt).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}</span>
+                        </div>
+                      </button>
+                    );
+                  })}
                 </div>
               </div>
-            ))}
-          </div>
+
+              {/* Right Column: Active Conversation Thread & Quick Reply (7 cols) */}
+              <div className="lg:col-span-7 bg-white rounded-3xl border border-slate-200 shadow-xs flex flex-col h-[560px] overflow-hidden">
+                {activeConversationUser ? (
+                  <>
+                    {/* Header */}
+                    <div className="px-5 py-3.5 bg-slate-50 border-b border-slate-200 flex items-center justify-between">
+                      <div className="flex items-center gap-3">
+                        <div className="w-8 h-8 rounded-full bg-indigo-600 text-white flex items-center justify-center font-bold text-xs">
+                          {activeConversationUser.userName[0] || 'C'}
+                        </div>
+                        <div>
+                          <p className="text-xs font-bold text-slate-900 flex items-center gap-1.5">
+                            <span>{activeConversationUser.userName}</span>
+                            <span className="text-[10px] font-mono bg-indigo-50 text-indigo-700 px-1.5 py-0.2 rounded border border-indigo-200">
+                              {activeConversationUser.customerId}
+                            </span>
+                          </p>
+                          <p className="text-[10px] text-slate-400">{activeConversationUser.userEmail}</p>
+                        </div>
+                      </div>
+
+                      <div className="flex items-center gap-2">
+                        {activeConversationUser.orderId && (
+                          <button
+                            onClick={() => onNavigate('order-detail', { id: activeConversationUser.orderId })}
+                            className="text-[10px] font-bold text-amber-800 bg-amber-50 border border-amber-200 px-2 py-1 rounded-lg hover:bg-amber-100"
+                          >
+                            Order #{activeConversationUser.orderId}
+                          </button>
+                        )}
+                        <button
+                          onClick={() => onNavigate('support', { userId: activeConversationUser.userId, orderId: activeConversationUser.orderId })}
+                          className="text-[10px] font-bold text-indigo-600 bg-indigo-50 border border-indigo-200 px-2 py-1 rounded-lg hover:bg-indigo-100"
+                          title="Open in full chat center"
+                        >
+                          Full Screen ↗
+                        </button>
+                      </div>
+                    </div>
+
+                    {/* Messages Body */}
+                    <div className="flex-1 p-4 overflow-y-auto space-y-3 bg-slate-50/40">
+                      {activeConversationUser.messages.length === 0 ? (
+                        <div className="text-center py-12 text-xs text-slate-400">
+                          <p>Customer conversation initiated. Ready for replies.</p>
+                        </div>
+                      ) : (
+                        activeConversationUser.messages.map((m) => {
+                          const isFromOwner = m.sender === 'owner';
+                          return (
+                            <div
+                              key={m.id}
+                              className={`flex flex-col ${isFromOwner ? 'items-end' : 'items-start'}`}
+                            >
+                              <div
+                                className={`max-w-[80%] rounded-2xl p-3 text-xs shadow-xs ${
+                                  isFromOwner
+                                    ? 'bg-indigo-600 text-white rounded-br-xs'
+                                    : 'bg-white border border-slate-200 text-slate-800 rounded-bl-xs'
+                                }`}
+                              >
+                                {m.message && <p className="leading-relaxed whitespace-pre-wrap">{m.message}</p>}
+                                {m.imageUrl && (
+                                  <img
+                                    src={m.imageUrl}
+                                    alt="Attachment"
+                                    className="mt-2 rounded-xl max-h-40 object-cover border border-black/10"
+                                  />
+                                )}
+                              </div>
+                              <span className="text-[9px] text-slate-400 mt-1 px-1">
+                                {new Date(m.createdAt).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
+                              </span>
+                            </div>
+                          );
+                        })
+                      )}
+                    </div>
+
+                    {/* Reply Input Bar */}
+                    <div className="p-3 bg-white border-t border-slate-200 space-y-2">
+                      <form
+                        onSubmit={async (e) => {
+                          e.preventDefault();
+                          const reply = chatReplyInput.trim();
+                          if (!reply) return;
+                          try {
+                            await replySupportMessage(activeConversationUser.userId, reply, activeConversationUser.orderId);
+                            setChatReplyInput('');
+                            setDashboardSuccessMsg('Reply sent directly to customer mobile & desktop!');
+                            setTimeout(() => setDashboardSuccessMsg(''), 4000);
+                          } catch (err: any) {
+                            setDashboardErrorMsg(err.message || 'Error delivering reply');
+                            setTimeout(() => setDashboardErrorMsg(''), 4000);
+                          }
+                        }}
+                        className="flex gap-2"
+                      >
+                        <input
+                          type="text"
+                          placeholder={`Type official reply to ${activeConversationUser.userName}...`}
+                          value={chatReplyInput}
+                          onChange={(e) => setChatReplyInput(e.target.value)}
+                          className="flex-1 bg-slate-50 border border-slate-200 rounded-xl px-3.5 py-2 text-xs outline-hidden focus:border-indigo-600"
+                        />
+                        <button
+                          type="submit"
+                          className="bg-indigo-600 hover:bg-indigo-700 text-white font-bold text-xs px-4 py-2 rounded-xl shadow-xs transition-all cursor-pointer active:scale-95"
+                        >
+                          Send
+                        </button>
+                      </form>
+
+                      <div className="flex items-center justify-between text-[11px] text-slate-500 pt-1">
+                        <span>💡 Real-time delivery via Firebase Firestore</span>
+                        <button
+                          type="button"
+                          onClick={async () => {
+                            try {
+                              await creditCustomerWalletFromChat(
+                                activeConversationUser.userId,
+                                500,
+                                'Goodwill promotional credit from store owner'
+                              );
+                              setDashboardSuccessMsg(`Successfully credited ₹500 to ${activeConversationUser.userName}'s wallet!`);
+                              setTimeout(() => setDashboardSuccessMsg(''), 4000);
+                            } catch (err: any) {
+                              setDashboardErrorMsg(err.message || 'Error crediting wallet');
+                              setTimeout(() => setDashboardErrorMsg(''), 4000);
+                            }
+                          }}
+                          className="text-emerald-700 hover:text-emerald-900 font-bold flex items-center gap-1 cursor-pointer"
+                        >
+                          <Wallet className="w-3.5 h-3.5" /> +₹500 Wallet Credit
+                        </button>
+                      </div>
+                    </div>
+                  </>
+                ) : (
+                  <div className="flex-1 flex items-center justify-center p-6 text-center text-xs text-slate-400">
+                    Select a customer conversation from the list to view and reply.
+                  </div>
+                )}
+              </div>
+            </div>
+          )}
         </div>
       )}
 
@@ -1715,6 +1831,812 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({ onNavigate }) =>
                 <p className="text-slate-400 text-[10px]">Min Order: ₹{v.minOrderValue} | Used: {v.usedCount} times</p>
               </div>
             ))}
+          </div>
+        </div>
+      )}
+
+      {/* TAB: OWNER-CONTROLLED TRENDING PRODUCTS */}
+      {activeTab === 'trending' && (
+        <div className="space-y-6 animate-in fade-in duration-200">
+          {/* Header Card */}
+          <div className="bg-white p-6 rounded-3xl border border-slate-200 shadow-xs flex flex-col md:flex-row md:items-center justify-between gap-4">
+            <div>
+              <div className="flex items-center gap-2">
+                <span className="p-1.5 bg-amber-100 text-amber-700 rounded-lg">
+                  <Flame className="w-5 h-5 fill-amber-500" />
+                </span>
+                <h2 className="text-lg font-black text-slate-900">Owner-Curated Trending Products</h2>
+              </div>
+              <p className="text-xs text-slate-500 mt-1 max-w-2xl">
+                Choose exactly which products appear in the homepage Trending Top Sellers section. Set custom display rank/priorities.
+                Only products you explicitly select will appear. Removing products from trending does NOT delete them from the store catalog.
+              </p>
+            </div>
+
+            <div className="flex items-center gap-3 shrink-0">
+              <span className="text-xs font-bold bg-slate-100 text-slate-700 px-3 py-1.5 rounded-xl border border-slate-200">
+                {trendingItems.length} Products Selected
+              </span>
+              <button
+                onClick={handleSaveTrendingOrder}
+                disabled={isSavingTrending}
+                className="bg-indigo-600 hover:bg-indigo-700 text-white font-bold text-xs px-5 py-2.5 rounded-xl shadow-md transition-all active:scale-95 flex items-center gap-2 cursor-pointer disabled:opacity-50"
+              >
+                {isSavingTrending ? (
+                  <>
+                    <Loader2 className="w-4 h-4 animate-spin" />
+                    <span>Saving to Firebase...</span>
+                  </>
+                ) : (
+                  <>
+                    <Save className="w-4 h-4" />
+                    <span>Save Trending Order</span>
+                  </>
+                )}
+              </button>
+            </div>
+          </div>
+
+          <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
+            {/* Left 2 Cols: Catalog Selection & Ranking */}
+            <div className="lg:col-span-2 space-y-6">
+              {/* Prioritized Trending Items List */}
+              <div className="bg-white p-5 rounded-3xl border border-slate-200 shadow-xs space-y-4">
+                <div className="flex items-center justify-between pb-3 border-b border-slate-100">
+                  <h3 className="text-sm font-bold text-slate-900 flex items-center gap-2">
+                    <span>Ranked Trending Order (Homepage Sequence)</span>
+                    <span className="text-[11px] font-bold text-amber-600 bg-amber-50 px-2 py-0.5 rounded-full border border-amber-200">
+                      Live on Homepage
+                    </span>
+                  </h3>
+                  <span className="text-[11px] text-slate-400">Order from 1 (first) to N</span>
+                </div>
+
+                {trendingItems.length === 0 ? (
+                  <div className="p-8 text-center text-slate-400 text-xs bg-slate-50 rounded-2xl border border-dashed border-slate-200">
+                    No products currently selected for Trending. Browse the catalog below and click &quot;+ Add to Trending&quot;.
+                  </div>
+                ) : (
+                  <div className="space-y-2">
+                    {[...trendingItems]
+                      .sort((a, b) => a.priority - b.priority)
+                      .map((tItem, idx) => {
+                        const prod = products.find((p) => p.id === tItem.productId);
+                        if (!prod) {
+                          return (
+                            <div
+                              key={tItem.productId}
+                              className="p-3 bg-rose-50 border border-rose-200 rounded-xl flex items-center justify-between text-xs"
+                            >
+                              <span className="text-rose-700 font-medium">
+                                Product #{tItem.productId} was deleted or unavailable
+                              </span>
+                              <button
+                                onClick={() => toggleTrendingProduct(tItem.productId)}
+                                className="text-rose-600 font-bold hover:underline cursor-pointer"
+                              >
+                                Remove from Trending
+                              </button>
+                            </div>
+                          );
+                        }
+
+                        return (
+                          <div
+                            key={prod.id}
+                            className="flex items-center justify-between gap-3 p-3 bg-slate-50 hover:bg-slate-100/70 border border-slate-200 rounded-2xl transition-all"
+                          >
+                            <div className="flex items-center gap-3 min-w-0">
+                              <span className="w-7 h-7 rounded-xl bg-amber-500 text-slate-950 font-black text-xs flex items-center justify-center shrink-0 shadow-2xs">
+                                #{idx + 1}
+                              </span>
+                              <img
+                                src={prod.mainImage}
+                                alt={prod.name}
+                                className="w-12 h-12 object-contain bg-white rounded-xl p-1 border border-slate-200 shrink-0"
+                              />
+                              <div className="min-w-0">
+                                <p className="font-bold text-slate-900 text-xs truncate">
+                                  {prod.name}
+                                </p>
+                                <div className="flex items-center gap-2 text-[11px] text-slate-500">
+                                  <span>{prod.brand}</span>
+                                  <span>•</span>
+                                  <span className="font-extrabold text-indigo-600">
+                                    ₹{prod.sellingPrice.toLocaleString()}
+                                  </span>
+                                  <span>•</span>
+                                  <span className="capitalize">{prod.category}</span>
+                                </div>
+                              </div>
+                            </div>
+
+                            <div className="flex items-center gap-2 shrink-0">
+                              <div className="flex items-center gap-1">
+                                <button
+                                  type="button"
+                                  disabled={idx === 0}
+                                  onClick={() => moveTrendingItem(idx, 'up')}
+                                  className="p-1.5 rounded-lg border border-slate-200 bg-white hover:bg-slate-50 text-slate-600 disabled:opacity-30 cursor-pointer"
+                                  title="Move Up"
+                                >
+                                  <ArrowUp className="w-3.5 h-3.5" />
+                                </button>
+                                <button
+                                  type="button"
+                                  disabled={idx === trendingItems.length - 1}
+                                  onClick={() => moveTrendingItem(idx, 'down')}
+                                  className="p-1.5 rounded-lg border border-slate-200 bg-white hover:bg-slate-50 text-slate-600 disabled:opacity-30 cursor-pointer"
+                                  title="Move Down"
+                                >
+                                  <ArrowDown className="w-3.5 h-3.5" />
+                                </button>
+                              </div>
+
+                              <input
+                                type="number"
+                                min={1}
+                                value={tItem.priority}
+                                onChange={(e) =>
+                                  changeTrendingPriority(tItem.productId, parseInt(e.target.value) || 1)
+                                }
+                                className="w-14 bg-white border border-slate-200 rounded-xl p-1.5 text-xs text-center font-bold text-slate-800"
+                                title="Custom Priority"
+                              />
+
+                              <button
+                                type="button"
+                                onClick={() => toggleTrendingProduct(prod.id)}
+                                className="p-1.5 rounded-xl text-rose-500 hover:bg-rose-50 transition-colors cursor-pointer"
+                                title="Remove from Trending"
+                              >
+                                <Trash2 className="w-4 h-4" />
+                              </button>
+                            </div>
+                          </div>
+                        );
+                      })}
+                  </div>
+                )}
+              </div>
+
+              {/* Browse Catalog to Add to Trending */}
+              <div className="bg-white p-5 rounded-3xl border border-slate-200 shadow-xs space-y-4">
+                <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 pb-3 border-b border-slate-100">
+                  <h3 className="text-sm font-bold text-slate-900">
+                    Browse Catalog to Add or Manage Trending
+                  </h3>
+
+                  <div className="flex items-center gap-2">
+                    <div className="relative">
+                      <Search className="w-3.5 h-3.5 text-slate-400 absolute left-2.5 top-1/2 -translate-y-1/2" />
+                      <input
+                        type="text"
+                        value={trendingSearch}
+                        onChange={(e) => setTrendingSearch(e.target.value)}
+                        placeholder="Search product..."
+                        className="bg-slate-50 border border-slate-200 text-xs rounded-xl pl-8 pr-3 py-1.5 outline-hidden focus:border-indigo-500"
+                      />
+                    </div>
+
+                    <select
+                      value={trendingCategoryFilter}
+                      onChange={(e) => setTrendingCategoryFilter(e.target.value)}
+                      className="bg-slate-50 border border-slate-200 text-xs rounded-xl px-2.5 py-1.5 font-medium outline-hidden"
+                    >
+                      <option value="all">All Categories</option>
+                      {categories.map((c) => (
+                        <option key={c.id} value={c.slug}>
+                          {c.name}
+                        </option>
+                      ))}
+                    </select>
+                  </div>
+                </div>
+
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 max-h-96 overflow-y-auto pr-1">
+                  {products
+                    .filter((p) => {
+                      if (!p.isActive) return false;
+                      if (
+                        trendingCategoryFilter !== 'all' &&
+                        p.category !== trendingCategoryFilter &&
+                        !p.categoryIds?.includes(trendingCategoryFilter)
+                      ) {
+                        return false;
+                      }
+                      if (trendingSearch.trim()) {
+                        const q = trendingSearch.toLowerCase();
+                        return (
+                          p.name.toLowerCase().includes(q) ||
+                          p.brand.toLowerCase().includes(q) ||
+                          p.category.toLowerCase().includes(q)
+                        );
+                      }
+                      return true;
+                    })
+                    .map((p) => {
+                      const isTrending = trendingItems.some((t) => t.productId === p.id);
+                      const priority = trendingItems.find((t) => t.productId === p.id)?.priority;
+
+                      return (
+                        <div
+                          key={p.id}
+                          className={`p-3 rounded-2xl border transition-all flex items-center justify-between gap-2 ${
+                            isTrending
+                              ? 'bg-amber-50/70 border-amber-300'
+                              : 'bg-slate-50 border-slate-200 hover:border-slate-300'
+                          }`}
+                        >
+                          <div className="flex items-center gap-2.5 min-w-0">
+                            <img
+                              src={p.mainImage}
+                              alt={p.name}
+                              className="w-10 h-10 object-contain bg-white rounded-lg p-0.5 border border-slate-200 shrink-0"
+                            />
+                            <div className="min-w-0">
+                              <p className="font-bold text-slate-900 text-xs truncate">{p.name}</p>
+                              <p className="text-[10px] text-slate-500 font-medium">
+                                ₹{p.sellingPrice.toLocaleString()} • {p.brand}
+                              </p>
+                            </div>
+                          </div>
+
+                          <button
+                            type="button"
+                            onClick={() => toggleTrendingProduct(p.id)}
+                            className={`px-2.5 py-1.5 rounded-xl text-[11px] font-bold shrink-0 transition-all cursor-pointer flex items-center gap-1 ${
+                              isTrending
+                                ? 'bg-amber-500 text-slate-950 shadow-2xs hover:bg-amber-400'
+                                : 'bg-white border border-slate-200 text-slate-700 hover:bg-slate-100'
+                            }`}
+                          >
+                            {isTrending ? (
+                              <>
+                                <CheckCircle className="w-3.5 h-3.5 text-slate-950" />
+                                <span>#{priority} Trending</span>
+                              </>
+                            ) : (
+                              <>
+                                <Plus className="w-3.5 h-3.5" />
+                                <span>Add</span>
+                              </>
+                            )}
+                          </button>
+                        </div>
+                      );
+                    })}
+                </div>
+              </div>
+            </div>
+
+            {/* Right 1 Col: Live Homepage Preview */}
+            <div className="space-y-4">
+              <div className="bg-gradient-to-br from-slate-900 to-indigo-950 text-white p-5 rounded-3xl shadow-xl border border-slate-800">
+                <div className="flex items-center justify-between pb-3 border-b border-white/10 mb-4">
+                  <div className="flex items-center gap-2">
+                    <span className="p-1 bg-amber-400 text-slate-950 rounded-lg">
+                      <Eye className="w-3.5 h-3.5" />
+                    </span>
+                    <h3 className="font-bold text-xs uppercase tracking-wider text-amber-300">
+                      Live Homepage Preview
+                    </h3>
+                  </div>
+                  <span className="text-[10px] text-indigo-300">Top Sellers Widget</span>
+                </div>
+
+                <div className="space-y-3">
+                  <div className="flex items-center justify-between text-xs font-bold text-white">
+                    <span className="flex items-center gap-1 text-amber-400">
+                      <Flame className="w-3.5 h-3.5 fill-amber-400" />
+                      Trending Top Sellers
+                    </span>
+                    <span className="text-[10px] text-slate-400">View All →</span>
+                  </div>
+
+                  {trendingItems.length === 0 ? (
+                    <div className="p-6 text-center text-xs text-slate-400 bg-white/5 rounded-2xl border border-white/10">
+                      No products in trending. Homepage will fall back to featured products.
+                    </div>
+                  ) : (
+                    <div className="grid grid-cols-2 gap-2.5">
+                      {[...trendingItems]
+                        .sort((a, b) => a.priority - b.priority)
+                        .slice(0, 4)
+                        .map((tItem, idx) => {
+                          const prod = products.find((p) => p.id === tItem.productId);
+                          if (!prod) return null;
+                          return (
+                            <div
+                              key={prod.id}
+                              className="bg-white/10 backdrop-blur-md rounded-2xl p-2.5 border border-white/10 flex flex-col justify-between relative group"
+                            >
+                              <span className="absolute top-1.5 left-1.5 bg-amber-400 text-slate-950 font-black text-[9px] px-1.5 py-0.5 rounded-md">
+                                #{idx + 1}
+                              </span>
+                              <img
+                                src={prod.mainImage}
+                                alt={prod.name}
+                                className="w-full h-20 object-contain rounded-xl bg-white/5 p-1 mb-2"
+                              />
+                              <div>
+                                <p className="font-bold text-[11px] text-white truncate">{prod.name}</p>
+                                <p className="text-[10px] font-black text-amber-300 mt-0.5">
+                                  ₹{prod.sellingPrice.toLocaleString()}
+                                </p>
+                              </div>
+                            </div>
+                          );
+                        })}
+                    </div>
+                  )}
+
+                  <p className="text-[10px] text-indigo-300/80 text-center pt-2">
+                    Customers see these top products ranked in order on the live store.
+                  </p>
+                </div>
+              </div>
+
+              {/* Master Set quick note */}
+              <div className="bg-amber-50 p-4 rounded-2xl border border-amber-200 text-xs text-amber-900 space-y-1.5">
+                <p className="font-bold flex items-center gap-1.5">
+                  <Sparkles className="w-4 h-4 text-amber-700" />
+                  Synced with Master Set
+                </p>
+                <p className="text-[11px] text-amber-800">
+                  Any trending priorities saved here are included whenever you run <strong>MASTER SET — CONFIRM ALL CHANGES</strong>.
+                </p>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* TAB: OWNER CONTROL CENTRE & FRIENDLY FEMALE AI ASSISTANT */}
+      {activeTab === 'assistant' && (
+        <div className="space-y-6 animate-in fade-in duration-200">
+          {/* Header Card */}
+          <div className="bg-white p-6 rounded-3xl border border-slate-200 shadow-xs flex flex-col md:flex-row md:items-center justify-between gap-4">
+            <div>
+              <div className="flex items-center gap-2">
+                <span className="p-1.5 bg-indigo-100 text-indigo-700 rounded-lg">
+                  <Bot className="w-5 h-5 text-indigo-600" />
+                </span>
+                <h2 className="text-lg font-black text-slate-900">
+                  Friendly Female AI Assistant & Store Knowledge
+                </h2>
+              </div>
+              <p className="text-xs text-slate-500 mt-1 max-w-2xl">
+                Configure your customer-facing AI assistant (Aria), female voice tone, speech parameters, store policies, return guidelines, and knowledge FAQs.
+              </p>
+            </div>
+
+            <button
+              onClick={handleSaveAIKnowledge}
+              disabled={isSavingAI}
+              className="bg-indigo-600 hover:bg-indigo-700 text-white font-bold text-xs px-5 py-2.5 rounded-xl shadow-md transition-all active:scale-95 flex items-center gap-2 cursor-pointer disabled:opacity-50 shrink-0"
+            >
+              {isSavingAI ? (
+                <>
+                  <Loader2 className="w-4 h-4 animate-spin" />
+                  <span>Saving to Firebase...</span>
+                </>
+              ) : (
+                <>
+                  <Save className="w-4 h-4" />
+                  <span>Save AI Knowledge</span>
+                </>
+              )}
+            </button>
+          </div>
+
+          <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
+            {/* Left 2 Cols: Form Configurations */}
+            <div className="lg:col-span-2 space-y-6">
+              {/* Persona & Voice Settings */}
+              <div className="bg-white p-5 rounded-3xl border border-slate-200 shadow-xs space-y-4">
+                <h3 className="text-sm font-bold text-slate-900 pb-2 border-b border-slate-100 flex items-center gap-2">
+                  <Sparkles className="w-4 h-4 text-indigo-600" />
+                  <span>Assistant Persona & Voice Preferences</span>
+                </h3>
+
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-4 text-xs">
+                  <div>
+                    <label className="font-bold text-slate-700 block mb-1">Assistant Name</label>
+                    <input
+                      type="text"
+                      value={localAIConfig.assistantPersonality.name}
+                      onChange={(e) =>
+                        setLocalAIConfig((prev) => ({
+                          ...prev,
+                          assistantPersonality: { ...prev.assistantPersonality, name: e.target.value },
+                        }))
+                      }
+                      className="w-full bg-slate-50 border border-slate-200 rounded-xl p-2.5 text-xs outline-hidden focus:border-indigo-500"
+                    />
+                  </div>
+
+                  <div>
+                    <label className="font-bold text-slate-700 block mb-1">Tone & Persona</label>
+                    <select
+                      value={localAIConfig.assistantPersonality.tone}
+                      onChange={(e) =>
+                        setLocalAIConfig((prev) => ({
+                          ...prev,
+                          assistantPersonality: {
+                            ...prev.assistantPersonality,
+                            tone: e.target.value as any,
+                          },
+                        }))
+                      }
+                      className="w-full bg-slate-50 border border-slate-200 rounded-xl p-2.5 text-xs outline-hidden focus:border-indigo-500 font-semibold"
+                    >
+                      <option value="warm_friendly_female">Warm & Friendly Female (Empathetic)</option>
+                      <option value="professional">Professional & Direct</option>
+                      <option value="casual">Casual & Trendy</option>
+                    </select>
+                  </div>
+                </div>
+
+                <div>
+                  <label className="font-bold text-slate-700 block mb-1 text-xs">
+                    Welcome Greeting Message
+                  </label>
+                  <textarea
+                    rows={2}
+                    value={localAIConfig.assistantPersonality.welcomeMessage}
+                    onChange={(e) =>
+                      setLocalAIConfig((prev) => ({
+                        ...prev,
+                        assistantPersonality: { ...prev.assistantPersonality, welcomeMessage: e.target.value },
+                      }))
+                    }
+                    className="w-full bg-slate-50 border border-slate-200 rounded-xl p-2.5 text-xs outline-hidden focus:border-indigo-500"
+                  />
+                </div>
+
+                {/* Voice Synthesis Settings */}
+                <div className="p-3.5 bg-slate-50 rounded-2xl border border-slate-200 space-y-3 text-xs">
+                  <div className="flex items-center justify-between">
+                    <div className="flex items-center gap-2">
+                      <Volume2 className="w-4 h-4 text-indigo-600" />
+                      <span className="font-bold text-slate-800">Web Speech Voice Audio</span>
+                    </div>
+                    <label className="flex items-center gap-2 cursor-pointer">
+                      <input
+                        type="checkbox"
+                        checked={localAIConfig.assistantPersonality.voiceEnabled}
+                        onChange={(e) =>
+                          setLocalAIConfig((prev) => ({
+                            ...prev,
+                            assistantPersonality: {
+                              ...prev.assistantPersonality,
+                              voiceEnabled: e.target.checked,
+                            },
+                          }))
+                        }
+                        className="rounded text-indigo-600"
+                      />
+                      <span className="text-[11px] font-semibold text-slate-600">
+                        {localAIConfig.assistantPersonality.voiceEnabled ? 'Voice Enabled' : 'Muted by Default'}
+                      </span>
+                    </label>
+                  </div>
+
+                  <div className="grid grid-cols-2 gap-4">
+                    <div>
+                      <div className="flex justify-between text-[11px] mb-1">
+                        <span className="text-slate-600">Speech Pitch</span>
+                        <span className="font-bold text-indigo-600">
+                          {localAIConfig.assistantPersonality.defaultSpeechPitch}
+                        </span>
+                      </div>
+                      <input
+                        type="range"
+                        min="0.8"
+                        max="1.4"
+                        step="0.05"
+                        value={localAIConfig.assistantPersonality.defaultSpeechPitch}
+                        onChange={(e) =>
+                          setLocalAIConfig((prev) => ({
+                            ...prev,
+                            assistantPersonality: {
+                              ...prev.assistantPersonality,
+                              defaultSpeechPitch: parseFloat(e.target.value),
+                            },
+                          }))
+                        }
+                        className="w-full accent-indigo-600"
+                      />
+                    </div>
+
+                    <div>
+                      <div className="flex justify-between text-[11px] mb-1">
+                        <span className="text-slate-600">Speech Rate</span>
+                        <span className="font-bold text-indigo-600">
+                          {localAIConfig.assistantPersonality.defaultSpeechRate}
+                        </span>
+                      </div>
+                      <input
+                        type="range"
+                        min="0.7"
+                        max="1.3"
+                        step="0.05"
+                        value={localAIConfig.assistantPersonality.defaultSpeechRate}
+                        onChange={(e) =>
+                          setLocalAIConfig((prev) => ({
+                            ...prev,
+                            assistantPersonality: {
+                              ...prev.assistantPersonality,
+                              defaultSpeechRate: parseFloat(e.target.value),
+                            },
+                          }))
+                        }
+                        className="w-full accent-indigo-600"
+                      />
+                    </div>
+                  </div>
+                </div>
+
+                {/* Suggested Quick Question Chips */}
+                <div>
+                  <label className="font-bold text-slate-700 block mb-1 text-xs">
+                    Suggested Quick Questions for Customers
+                  </label>
+                  <div className="flex flex-wrap gap-2 mb-2">
+                    {localAIConfig.assistantPersonality.suggestedQuestions.map((q, idx) => (
+                      <span
+                        key={idx}
+                        className="bg-indigo-50 text-indigo-800 text-[11px] font-bold px-2.5 py-1 rounded-xl flex items-center gap-1.5 border border-indigo-200"
+                      >
+                        <span>{q}</span>
+                        <button
+                          type="button"
+                          onClick={() => handleRemoveSuggestedQuestion(idx)}
+                          className="hover:text-rose-600 cursor-pointer"
+                        >
+                          <X className="w-3 h-3" />
+                        </button>
+                      </span>
+                    ))}
+                  </div>
+
+                  <div className="flex gap-2">
+                    <input
+                      type="text"
+                      placeholder="Add new prompt chip (e.g. 🔥 Best smartwatches)..."
+                      value={newSuggestedQ}
+                      onChange={(e) => setNewSuggestedQ(e.target.value)}
+                      className="flex-1 bg-slate-50 border border-slate-200 rounded-xl p-2 text-xs outline-hidden"
+                    />
+                    <button
+                      type="button"
+                      onClick={handleAddSuggestedQuestion}
+                      className="bg-slate-800 hover:bg-slate-700 text-white font-bold text-xs px-3 py-2 rounded-xl cursor-pointer"
+                    >
+                      + Add Chip
+                    </button>
+                  </div>
+                </div>
+              </div>
+
+              {/* Store Knowledge & Operating Policies */}
+              <div className="bg-white p-5 rounded-3xl border border-slate-200 shadow-xs space-y-4">
+                <h3 className="text-sm font-bold text-slate-900 pb-2 border-b border-slate-100 flex items-center gap-2">
+                  <ShieldCheck className="w-4 h-4 text-emerald-600" />
+                  <span>Store Knowledge Policies (Answers Grounded Here)</span>
+                </h3>
+
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-4 text-xs">
+                  <div>
+                    <label className="font-bold text-slate-700 block mb-1">
+                      Dispatch Hub & Facility Address
+                    </label>
+                    <textarea
+                      rows={2}
+                      value={localAIConfig.dispatchHubAddress}
+                      onChange={(e) =>
+                        setLocalAIConfig((prev) => ({ ...prev, dispatchHubAddress: e.target.value }))
+                      }
+                      className="w-full bg-slate-50 border border-slate-200 rounded-xl p-2 text-xs outline-hidden"
+                    />
+                  </div>
+
+                  <div>
+                    <label className="font-bold text-slate-700 block mb-1">
+                      Shipping & Delivery Rules
+                    </label>
+                    <textarea
+                      rows={2}
+                      value={localAIConfig.shippingPolicy}
+                      onChange={(e) =>
+                        setLocalAIConfig((prev) => ({ ...prev, shippingPolicy: e.target.value }))
+                      }
+                      className="w-full bg-slate-50 border border-slate-200 rounded-xl p-2 text-xs outline-hidden"
+                    />
+                  </div>
+
+                  <div>
+                    <label className="font-bold text-slate-700 block mb-1">
+                      Return & Refund Policy
+                    </label>
+                    <textarea
+                      rows={2}
+                      value={localAIConfig.returnRefundPolicy}
+                      onChange={(e) =>
+                        setLocalAIConfig((prev) => ({ ...prev, returnRefundPolicy: e.target.value }))
+                      }
+                      className="w-full bg-slate-50 border border-slate-200 rounded-xl p-2 text-xs outline-hidden"
+                    />
+                  </div>
+
+                  <div>
+                    <label className="font-bold text-slate-700 block mb-1">
+                      Coupon & Discount Guidelines
+                    </label>
+                    <textarea
+                      rows={2}
+                      value={localAIConfig.couponRules}
+                      onChange={(e) =>
+                        setLocalAIConfig((prev) => ({ ...prev, couponRules: e.target.value }))
+                      }
+                      className="w-full bg-slate-50 border border-slate-200 rounded-xl p-2 text-xs outline-hidden"
+                    />
+                  </div>
+                </div>
+              </div>
+
+              {/* Custom FAQs Manager */}
+              <div className="bg-white p-5 rounded-3xl border border-slate-200 shadow-xs space-y-4">
+                <div className="flex items-center justify-between pb-2 border-b border-slate-100">
+                  <h3 className="text-sm font-bold text-slate-900 flex items-center gap-2">
+                    <HelpCircle className="w-4 h-4 text-indigo-600" />
+                    <span>Frequently Asked Questions ({localAIConfig.faqs?.length || 0})</span>
+                  </h3>
+                </div>
+
+                <div className="space-y-2.5">
+                  {localAIConfig.faqs?.map((f, idx) => (
+                    <div
+                      key={idx}
+                      className="p-3 bg-slate-50 border border-slate-200 rounded-2xl flex items-start justify-between gap-3 text-xs"
+                    >
+                      <div className="space-y-1 min-w-0">
+                        <p className="font-bold text-slate-900">Q: {f.question}</p>
+                        <p className="text-slate-600 text-[11px] leading-relaxed">A: {f.answer}</p>
+                      </div>
+                      <button
+                        type="button"
+                        onClick={() => handleDeleteFaq(idx)}
+                        className="text-rose-500 hover:text-rose-700 p-1 cursor-pointer shrink-0"
+                        title="Delete FAQ"
+                      >
+                        <Trash2 className="w-4 h-4" />
+                      </button>
+                    </div>
+                  ))}
+                </div>
+
+                {/* Add new FAQ inputs */}
+                <div className="p-3 bg-indigo-50/50 rounded-2xl border border-indigo-100 space-y-2 text-xs">
+                  <span className="font-bold text-indigo-900 block">Add New Custom FAQ:</span>
+                  <input
+                    type="text"
+                    placeholder="Question (e.g. How does warranty claim work?)"
+                    value={newFaqQ}
+                    onChange={(e) => setNewFaqQ(e.target.value)}
+                    className="w-full bg-white border border-slate-200 rounded-xl p-2 text-xs outline-hidden"
+                  />
+                  <textarea
+                    rows={2}
+                    placeholder="Answer for the assistant to provide to customers..."
+                    value={newFaqA}
+                    onChange={(e) => setNewFaqA(e.target.value)}
+                    className="w-full bg-white border border-slate-200 rounded-xl p-2 text-xs outline-hidden"
+                  />
+                  <button
+                    type="button"
+                    onClick={handleAddFaq}
+                    disabled={!newFaqQ.trim() || !newFaqA.trim()}
+                    className="bg-indigo-600 hover:bg-indigo-700 disabled:opacity-40 text-white font-bold text-xs px-4 py-2 rounded-xl cursor-pointer transition-colors"
+                  >
+                    + Add FAQ Entry
+                  </button>
+                </div>
+              </div>
+            </div>
+
+            {/* Right 1 Col: Live AI Assistant Simulator */}
+            <div className="space-y-4">
+              <div className="bg-slate-900 text-white p-5 rounded-3xl shadow-xl border border-slate-800 flex flex-col h-[580px]">
+                <div className="flex items-center justify-between pb-3 border-b border-white/10 mb-3">
+                  <div className="flex items-center gap-2">
+                    <span className="p-1 bg-amber-400 text-slate-950 rounded-lg">
+                      <Bot className="w-4 h-4" />
+                    </span>
+                    <div>
+                      <h4 className="font-bold text-xs text-white">Owner Test Simulator</h4>
+                      <p className="text-[10px] text-slate-400">Preview live assistant answers</p>
+                    </div>
+                  </div>
+                  <button
+                    onClick={() =>
+                      setSimChatMessages([
+                        {
+                          sender: 'ai',
+                          text: localAIConfig.assistantPersonality.welcomeMessage,
+                        },
+                      ])
+                    }
+                    className="text-[10px] text-slate-400 hover:text-white flex items-center gap-1 cursor-pointer"
+                  >
+                    <RefreshCw className="w-3 h-3" /> Reset
+                  </button>
+                </div>
+
+                {/* Messages feed */}
+                <div className="flex-1 overflow-y-auto space-y-3 p-1 text-xs">
+                  {simChatMessages.map((m, idx) => (
+                    <div
+                      key={idx}
+                      className={`flex flex-col ${
+                        m.sender === 'owner' ? 'items-end' : 'items-start'
+                      }`}
+                    >
+                      <div
+                        className={`max-w-[85%] rounded-2xl p-2.5 text-xs leading-relaxed ${
+                          m.sender === 'owner'
+                            ? 'bg-indigo-600 text-white rounded-br-xs'
+                            : 'bg-white/10 text-slate-100 border border-white/10 rounded-bl-xs'
+                        }`}
+                      >
+                        {m.text}
+                      </div>
+                      <span className="text-[9px] text-slate-500 mt-0.5 px-1">
+                        {m.sender === 'owner' ? 'You' : localAIConfig.assistantPersonality.name}
+                      </span>
+                    </div>
+                  ))}
+                </div>
+
+                {/* Quick chip tests */}
+                <div className="pt-2 pb-2 flex gap-1.5 overflow-x-auto text-[10px] border-t border-white/10">
+                  {['Return policy', 'Coupons', 'Dispatch hub', 'Smartphones'].map((q, i) => (
+                    <button
+                      key={i}
+                      onClick={() => handleSimSendMessage(q)}
+                      className="shrink-0 bg-white/10 hover:bg-white/20 text-slate-300 px-2 py-0.5 rounded-lg cursor-pointer"
+                    >
+                      {q}
+                    </button>
+                  ))}
+                </div>
+
+                {/* Simulator input */}
+                <div className="flex gap-2 pt-1">
+                  <input
+                    type="text"
+                    value={simInput}
+                    onChange={(e) => setSimInput(e.target.value)}
+                    onKeyDown={(e) => {
+                      if (e.key === 'Enter') {
+                        e.preventDefault();
+                        handleSimSendMessage();
+                      }
+                    }}
+                    placeholder="Test query (e.g. What is the shipping time?)..."
+                    className="flex-1 bg-white/10 border border-white/20 rounded-xl px-3 py-2 text-xs text-white placeholder-slate-400 outline-hidden focus:border-indigo-400"
+                  />
+                  <button
+                    type="button"
+                    onClick={() => handleSimSendMessage()}
+                    className="bg-indigo-600 hover:bg-indigo-700 text-white px-3 py-2 rounded-xl text-xs font-bold cursor-pointer"
+                  >
+                    Send
+                  </button>
+                </div>
+              </div>
+            </div>
           </div>
         </div>
       )}
@@ -1823,33 +2745,56 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({ onNavigate }) =>
                 </div>
               </div>
 
-              {/* Advanced Drag & Drop Product Thumbnail and Extra Gallery Images */}
-              <div className="bg-slate-50/70 p-3.5 rounded-2xl border border-slate-200">
-                <ProductImageUploader
-                  mainImage={newProd.mainImage || ''}
-                  onMainImageChange={(url) => {
-                    setNewProd((prev) => ({
-                      ...prev,
-                      mainImage: url,
-                    }));
-                  }}
-                  images={newProd.images || []}
-                  onImagesChange={(urls) => {
-                    setNewProd((prev) => ({
-                      ...prev,
-                      images: urls,
-                    }));
-                  }}
-                  onStatusNotification={(type, msg) => {
-                    if (type === 'error') {
-                      setDashboardErrorMsg(msg);
-                      setTimeout(() => setDashboardErrorMsg(''), 4000);
-                    } else if (type === 'success') {
-                      setDashboardSuccessMsg(msg);
-                      setTimeout(() => setDashboardSuccessMsg(''), 3000);
-                    }
-                  }}
+              {/* Main Thumbnail Image Upload from File */}
+              <div>
+                <label className="font-bold text-slate-700 block mb-1">
+                  Product Thumbnail Image (Upload from File) *
+                </label>
+                <input
+                  type="file"
+                  accept="image/*"
+                  onChange={handleProductMainImageFile}
+                  className="w-full text-xs text-slate-500 file:mr-2 file:py-1.5 file:px-3 file:rounded-xl file:border-0 file:text-xs file:font-bold file:bg-indigo-50 file:text-indigo-700 hover:file:bg-indigo-100 cursor-pointer"
                 />
+                <input
+                  type="text"
+                  placeholder="Or paste image URL"
+                  value={newProd.mainImage}
+                  onChange={(e) => setNewProd({ ...newProd, mainImage: e.target.value })}
+                  className="w-full mt-1.5 bg-slate-50 border border-slate-200 rounded-xl p-2 text-xs"
+                />
+                {newProd.mainImage && (
+                  <img
+                    src={newProd.mainImage}
+                    alt="Thumbnail preview"
+                    className="w-16 h-16 object-contain rounded-xl border border-slate-200 mt-2 p-1"
+                  />
+                )}
+              </div>
+
+              {/* Extra Images from File */}
+              <div>
+                <label className="font-bold text-slate-700 block mb-1">
+                  Extra Gallery Images (Upload from File)
+                </label>
+                <input
+                  type="file"
+                  accept="image/*"
+                  onChange={handleProductExtraImageFile}
+                  className="w-full text-xs text-slate-500 file:mr-2 file:py-1.5 file:px-3 file:rounded-xl file:border-0 file:text-xs file:font-bold file:bg-indigo-50 file:text-indigo-700 hover:file:bg-indigo-100 cursor-pointer"
+                />
+                {newProd.images && newProd.images.length > 0 && (
+                  <div className="flex gap-2 mt-2">
+                    {newProd.images.map((img, i) => (
+                      <img
+                        key={i}
+                        src={img}
+                        alt="Gallery"
+                        className="w-12 h-12 object-contain rounded-lg border border-slate-200 p-1"
+                      />
+                    ))}
+                  </div>
+                )}
               </div>
 
               <div>
@@ -2627,6 +3572,171 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({ onNavigate }) =>
                   </span>
                 )}
               </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* MASTER SET CONFIRMATION & REVIEW MODAL */}
+      {showMasterSetModal && (
+        <div className="fixed inset-0 z-50 bg-black/60 backdrop-blur-xs flex items-center justify-center p-4">
+          <div className="bg-white rounded-3xl max-w-2xl w-full p-6 sm:p-8 shadow-2xl border border-slate-200 overflow-y-auto max-h-[90vh] space-y-6 animate-in fade-in zoom-in-95">
+            <div className="flex items-start justify-between">
+              <div className="flex items-center gap-3">
+                <div className="p-3 bg-amber-400 text-slate-950 rounded-2xl shadow-md">
+                  <Sparkles className="w-6 h-6 animate-spin [animation-duration:6s]" />
+                </div>
+                <div>
+                  <h3 className="text-xl font-black text-slate-900">
+                    MASTER SET — CONFIRM ALL CHANGES
+                  </h3>
+                  <p className="text-xs text-slate-500">
+                    Review and permanently publish store configuration draft to Firebase Cloud Firestore.
+                  </p>
+                </div>
+              </div>
+              <button
+                onClick={() => setShowMasterSetModal(false)}
+                className="p-1.5 text-slate-400 hover:text-slate-600 rounded-xl cursor-pointer"
+              >
+                <X className="w-5 h-5" />
+              </button>
+            </div>
+
+            {/* Validation & Summary List */}
+            <div className="space-y-3">
+              <div className="bg-slate-50 rounded-2xl p-4 border border-slate-200 space-y-2.5">
+                <span className="text-xs font-bold uppercase tracking-wider text-slate-600 block">
+                  Configuration Components to Publish:
+                </span>
+
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-2.5 text-xs">
+                  <div className="p-2.5 bg-white rounded-xl border border-slate-200 flex items-center gap-2">
+                    <CheckCircle className="w-4 h-4 text-emerald-600 shrink-0" />
+                    <div>
+                      <strong className="block text-slate-900">Website Layout & Theme</strong>
+                      <span className="text-[10px] text-slate-500">
+                        New Revision #{(websiteConfig.revision || 1) + 1}
+                      </span>
+                    </div>
+                  </div>
+
+                  <div className="p-2.5 bg-white rounded-xl border border-slate-200 flex items-center gap-2">
+                    <CheckCircle className="w-4 h-4 text-emerald-600 shrink-0" />
+                    <div>
+                      <strong className="block text-slate-900">Curated Trending Deals</strong>
+                      <span className="text-[10px] text-slate-500">
+                        {trendingItems.length} products with custom priorities
+                      </span>
+                    </div>
+                  </div>
+
+                  <div className="p-2.5 bg-white rounded-xl border border-slate-200 flex items-center gap-2">
+                    <CheckCircle className="w-4 h-4 text-emerald-600 shrink-0" />
+                    <div>
+                      <strong className="block text-slate-900">AI Assistant & Knowledge</strong>
+                      <span className="text-[10px] text-slate-500">
+                        {localAIConfig.assistantPersonality.name} • {localAIConfig.faqs?.length || 0} FAQs
+                      </span>
+                    </div>
+                  </div>
+
+                  <div className="p-2.5 bg-white rounded-xl border border-slate-200 flex items-center gap-2">
+                    <CheckCircle className="w-4 h-4 text-emerald-600 shrink-0" />
+                    <div>
+                      <strong className="block text-slate-900">Header Announcement Bar</strong>
+                      <span className="text-[10px] text-slate-500">
+                        {localAnnouncement.headline || 'Active promo bar'}
+                      </span>
+                    </div>
+                  </div>
+
+                  <div className="p-2.5 bg-white rounded-xl border border-slate-200 flex items-center gap-2">
+                    <CheckCircle className="w-4 h-4 text-emerald-600 shrink-0" />
+                    <div>
+                      <strong className="block text-slate-900">Promotional Banners</strong>
+                      <span className="text-[10px] text-slate-500">{banners.length} active banners</span>
+                    </div>
+                  </div>
+
+                  <div className="p-2.5 bg-white rounded-xl border border-slate-200 flex items-center gap-2">
+                    <CheckCircle className="w-4 h-4 text-emerald-600 shrink-0" />
+                    <div>
+                      <strong className="block text-slate-900">Discount Coupons</strong>
+                      <span className="text-[10px] text-slate-500">{vouchers.length} store vouchers</span>
+                    </div>
+                  </div>
+                </div>
+              </div>
+
+              {/* Policy & Safety Notice */}
+              <div className="p-4 bg-indigo-50/70 rounded-2xl border border-indigo-200/80 text-xs text-indigo-900 space-y-1">
+                <p className="font-bold flex items-center gap-1.5">
+                  <ShieldCheck className="w-4 h-4 text-indigo-700" />
+                  Preservation Guarantee:
+                </p>
+                <p className="text-[11px] text-indigo-800">
+                  Customer accounts, wallet balances, orders history, payment transaction logs, and customer chat records will NOT be deleted or reset. Only replaceable design configurations, trending rankings, and store settings will be updated to the new revision.
+                </p>
+              </div>
+
+              {/* Result display if saved */}
+              {masterSetResult && (
+                <div
+                  className={`p-4 rounded-2xl border text-xs font-bold space-y-2 ${
+                    masterSetResult.success
+                      ? 'bg-emerald-50 border-emerald-300 text-emerald-900'
+                      : 'bg-amber-50 border-amber-300 text-amber-900'
+                  }`}
+                >
+                  <div className="flex items-center gap-2 text-sm font-black">
+                    <CheckCircle className="w-5 h-5 text-emerald-600" />
+                    <span>
+                      Successfully Published Revision #{masterSetResult.revision}!
+                    </span>
+                  </div>
+                  <p className="text-[11px]">
+                    Updated collections: {masterSetResult.savedSections.join(' • ')}
+                  </p>
+                  {masterSetResult.errors && masterSetResult.errors.length > 0 && (
+                    <div className="p-2 bg-rose-50 border border-rose-200 rounded-xl text-rose-800 text-[11px]">
+                      <strong>Failed items:</strong> {masterSetResult.errors.join(', ')}
+                    </div>
+                  )}
+                </div>
+              )}
+            </div>
+
+            {/* Modal Actions */}
+            <div className="flex items-center justify-end gap-3 pt-2 border-t border-slate-100">
+              <button
+                type="button"
+                onClick={() => setShowMasterSetModal(false)}
+                className="px-5 py-2.5 rounded-xl border border-slate-200 text-slate-700 hover:bg-slate-100 text-xs font-bold cursor-pointer"
+              >
+                {masterSetResult ? 'Close' : 'Cancel'}
+              </button>
+
+              {!masterSetResult && (
+                <button
+                  type="button"
+                  disabled={isSavingMasterSet}
+                  onClick={handleExecuteMasterSet}
+                  className="bg-amber-500 hover:bg-amber-400 text-slate-950 font-black text-xs px-6 py-2.5 rounded-xl shadow-lg transition-transform active:scale-95 flex items-center gap-2 cursor-pointer disabled:opacity-50"
+                >
+                  {isSavingMasterSet ? (
+                    <>
+                      <Loader2 className="w-4 h-4 animate-spin" />
+                      <span>Writing to Firebase Firestore...</span>
+                    </>
+                  ) : (
+                    <>
+                      <Sparkles className="w-4 h-4" />
+                      <span>Confirm & Apply Master Set</span>
+                    </>
+                  )}
+                </button>
+              )}
             </div>
           </div>
         </div>

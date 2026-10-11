@@ -13,7 +13,7 @@ import {
   updateDoc,
   onSnapshot
 } from 'firebase/firestore';
-import { auth, db, handleFirestoreError, OperationType } from '../config/firebase';
+import { auth, db, handleFirestoreError, OperationType, sanitizeForFirestore } from '../config/firebase';
 import { UserProfile } from '../types';
 
 // Configured owner/admin emails and static UID
@@ -98,7 +98,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
               updates.role = 'admin';
             }
             if (Object.keys(updates).length > 0) {
-              await updateDoc(userDocRef, updates);
+              await updateDoc(userDocRef, sanitizeForFirestore(updates));
             }
             setUserProfile(data);
           } else {
@@ -114,7 +114,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
               walletBalance: 500, // Starter wallet promotional credits for new customer
               createdAt: new Date().toISOString(),
             };
-            await setDoc(userDocRef, newProfile);
+            await setDoc(userDocRef, sanitizeForFirestore(newProfile));
             setUserProfile(newProfile);
           }
         } catch (error) {
@@ -177,8 +177,9 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
         delete safeData.role;
       }
       safeData.updatedAt = new Date().toISOString();
-      await updateDoc(userDocRef, safeData);
-      setUserProfile((prev) => (prev ? { ...prev, ...safeData } : null));
+      const sanitized = sanitizeForFirestore(safeData);
+      await updateDoc(userDocRef, sanitized);
+      setUserProfile((prev) => (prev ? { ...prev, ...sanitized } : null));
     } catch (error) {
       handleFirestoreError(error, OperationType.UPDATE, `users/${currentUser.uid}`);
     }

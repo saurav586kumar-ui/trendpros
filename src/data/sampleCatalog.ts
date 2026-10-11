@@ -1,4 +1,4 @@
-import { Product, Category, Banner, Voucher, StoreAnnouncementConfig } from '../types';
+import { Product, Category, Banner, Voucher, StoreAnnouncementConfig, WebsiteConfig, AIKnowledgeConfig, TrendingConfig } from '../types';
 
 export const SAMPLE_CATEGORIES: Category[] = [
   {
@@ -709,3 +709,86 @@ export const SAMPLE_VOUCHERS: Voucher[] = [
     usedCount: 240
   }
 ];
+
+export const DEFAULT_WEBSITE_CONFIG: WebsiteConfig = {
+  primaryColor: '#4f46e5', // Indigo 600
+  fontFamily: 'Plus Jakarta Sans',
+  homepageSections: [
+    { id: 'hero_banners', name: 'Top Promotional Banners', isVisible: true, order: 1 },
+    { id: 'category_ribbon', name: 'Shop by Categories', isVisible: true, order: 2 },
+    { id: 'trending_products', name: 'Curated Trending Deals', isVisible: true, order: 3 },
+    { id: 'featured_products', name: 'Featured Catalog & Best Sellers', isVisible: true, order: 4 },
+    { id: 'trust_badges', name: 'Why Shop With TrendPro', isVisible: true, order: 5 },
+  ],
+  aboutUsContent: 'TrendPro is a premium online marketplace dedicated to bringing you genuine electronics, designer fashion, smart home essentials, and luxury lifestyle products with blazing fast dispatch, zero-hassle returns, and 24/7 dedicated customer care.',
+  privacyPolicyContent: 'At TrendPro, your privacy is our highest priority. All payments are encrypted, authentication is safeguarded through Google Firebase, and your personal data is never shared with unauthorized third parties.',
+  termsContent: 'By shopping on TrendPro, you agree to our fair usage guidelines, authentic product quality guarantees, and transparent shipping timeline commitments.',
+  contactEmail: 'saurav586kumar@gmail.com',
+  contactPhone: '+91 98765 43210',
+  contactAddress: 'TrendPro Central Dispatch & Packing Facility, Near Station Road, Shivaji Nagar, Samastipur, Bihar - 848101',
+  revision: 1,
+  updatedAt: new Date().toISOString(),
+};
+
+export const DEFAULT_AI_KNOWLEDGE: AIKnowledgeConfig = {
+  storeName: 'TrendPro',
+  tagline: 'Premium Online Marketplace & Super-Fast Delivery',
+  verifiedOwnerInfo: 'Verified Store Owner: Saurav Kumar (Direct Email: saurav586kumar@gmail.com)',
+  supportEmail: 'saurav586kumar@gmail.com',
+  supportPhone: '+91 98765 43210',
+  supportHours: '9:00 AM – 9:00 PM IST (Mon–Sun)',
+  dispatchHubAddress: 'TrendPro Central Dispatch & Packing Facility, Shivaji Nagar, Samastipur, Bihar - 848101',
+  shippingPolicy: 'Standard delivery takes 3 to 8 business days across India. Orders above ₹999 qualify for FREE delivery, otherwise standard delivery charge is ₹79. Real-time courier tracking numbers are updated upon dispatch.',
+  returnRefundPolicy: 'TrendPro offers an easy 7-day return policy on delivered items. When an eligible return request is approved by the owner, refunds are processed instantly to your TrendPro Wallet balance or original payment method.',
+  couponRules: 'Coupons must be entered at checkout in the promo code input. Only one promo code can be applied per order. Coupons cannot be stacked unless specified, and must meet minimum order values.',
+  walletInstructions: 'TrendPro Wallet balance can be used to pay for any purchase instantly with 1-click checkout. You can also redeem 16-digit TrendPro Digital Gift Cards to credit your wallet balance.',
+  faqs: [
+    {
+      question: 'How do I track my order?',
+      answer: 'Go to My Orders from the top navigation bar or your profile. Click "View Details" on any placed order to see live tracking, courier timeline, and estimated delivery dates.'
+    },
+    {
+      question: 'Can I cancel an order?',
+      answer: 'Yes! You can request cancellation for orders that have not yet been dispatched directly from the Order Details page. The store owner will review and approve the refund immediately.'
+    },
+    {
+      question: 'How do I use my wallet balance?',
+      answer: 'During checkout, simply check the "Use TrendPro Wallet Balance" checkbox. The available balance will automatically be deducted from your order total.'
+    },
+    {
+      question: 'Are all products authentic?',
+      answer: 'Every product on TrendPro is 100% authentic, brand-verified, and dispatched with standard manufacturer warranty and quality checks.'
+    }
+  ],
+  assistantPersonality: {
+    name: 'Riya — TrendPro Assistant',
+    tone: 'warm_friendly_female',
+    languages: 'Hindi, Hinglish, English',
+    welcomeMessage: 'Namaste! Main Riya hoon, aapki friendly TrendPro shopping assistant. Main aapko products dhoondhne, coupons lagane, orders track karne aur checkout mein help kar sakti hoon. Aaj main aapki kya madad kar sakti hoon?',
+    suggestedQuestions: [
+      '🔥 Trending Deals dikhao',
+      '📦 Mera order track karo',
+      '🏷️ Active discount coupons',
+      '🔄 Return policy kya hai?',
+      '😄 Ek funny joke sunao',
+      '👤 TrendPro ka owner kaun hai?',
+    ],
+    voiceEnabled: true,
+    defaultSpeechRate: 0.95,
+    defaultSpeechPitch: 1.05,
+  },
+  revision: 1,
+  updatedAt: new Date().toISOString(),
+};
+
+export const DEFAULT_TRENDING_CONFIG: TrendingConfig = {
+  productIds: ['prod-ultra-watch', 'prod-audio-pods', 'prod-running-shoes', 'prod-coffee-maker'],
+  items: [
+    { productId: 'prod-ultra-watch', priority: 1 },
+    { productId: 'prod-audio-pods', priority: 2 },
+    { productId: 'prod-running-shoes', priority: 3 },
+    { productId: 'prod-coffee-maker', priority: 4 },
+  ],
+  updatedAt: new Date().toISOString(),
+};
+

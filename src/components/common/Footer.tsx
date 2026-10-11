@@ -1,4 +1,4 @@
-import React from 'react';
+import React, { useState } from 'react';
 import {
   ShoppingBag,
   ShieldCheck,
@@ -6,7 +6,8 @@ import {
   Truck,
   Headphones,
   Mail,
-  ArrowRight
+  ArrowRight,
+  Check
 } from 'lucide-react';
 
 interface FooterProps {
@@ -14,6 +15,7 @@ interface FooterProps {
 }
 
 export const Footer: React.FC<FooterProps> = ({ onNavigate }) => {
+  const [subscribed, setSubscribed] = useState(false);
   return (
     <footer className="bg-slate-950 text-slate-300 mt-20 border-t border-slate-800">
       {/* Trust & Guarantee Banner */}
@@ -82,23 +84,36 @@ export const Footer: React.FC<FooterProps> = ({ onNavigate }) => {
             {/* Newsletter */}
             <div className="pt-2">
               <p className="text-xs font-semibold text-slate-200 mb-2">Subscribe to Secret VIP Deals</p>
-              <form onSubmit={(e) => { e.preventDefault(); alert('Subscribed to TrendPro VIP Deals!'); }} className="flex gap-2 max-w-sm">
-                <div className="relative flex-1">
-                  <Mail className="w-4 h-4 text-slate-500 absolute left-3 top-1/2 -translate-y-1/2" />
-                  <input
-                    type="email"
-                    placeholder="Enter your email"
-                    required
-                    className="w-full bg-slate-900 border border-slate-800 rounded-lg pl-9 pr-3 py-2 text-xs text-white placeholder-slate-500 focus:outline-hidden focus:border-indigo-500"
-                  />
+              {subscribed ? (
+                <div className="p-2.5 bg-emerald-950/60 border border-emerald-800 text-emerald-300 rounded-lg text-xs font-semibold flex items-center gap-1.5">
+                  <Check className="w-4 h-4 text-emerald-400" />
+                  <span>Subscribed! You'll receive secret VIP deals.</span>
                 </div>
-                <button
-                  type="submit"
-                  className="bg-indigo-600 hover:bg-indigo-700 text-white text-xs font-semibold px-3 py-2 rounded-lg flex items-center gap-1 transition-colors"
+              ) : (
+                <form
+                  onSubmit={(e) => {
+                    e.preventDefault();
+                    setSubscribed(true);
+                  }}
+                  className="flex gap-2 max-w-sm"
                 >
-                  Join <ArrowRight className="w-3 h-3" />
-                </button>
-              </form>
+                  <div className="relative flex-1">
+                    <Mail className="w-4 h-4 text-slate-500 absolute left-3 top-1/2 -translate-y-1/2" />
+                    <input
+                      type="email"
+                      placeholder="Enter your email"
+                      required
+                      className="w-full bg-slate-900 border border-slate-800 rounded-lg pl-9 pr-3 py-2 text-xs text-white placeholder-slate-500 focus:outline-hidden focus:border-indigo-500"
+                    />
+                  </div>
+                  <button
+                    type="submit"
+                    className="bg-indigo-600 hover:bg-indigo-700 text-white text-xs font-semibold px-3 py-2 rounded-lg flex items-center gap-1 transition-colors cursor-pointer"
+                  >
+                    Join <ArrowRight className="w-3 h-3" />
+                  </button>
+                </form>
+              )}
             </div>
           </div>
 

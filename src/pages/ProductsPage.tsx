@@ -4,12 +4,11 @@ import {
   X,
   SlidersHorizontal,
   Star,
-  Search,
-  Share2
+  Search
 } from 'lucide-react';
 import { ProductCard } from '../components/common/ProductCard';
 import { useStore } from '../context/StoreContext';
-import { shareCategory, shareTrending } from '../utils/sharing';
+import { Product } from '../types';
 
 interface ProductsPageProps {
   onNavigate: (route: string, params?: Record<string, any>) => void;
@@ -22,7 +21,7 @@ export const ProductsPage: React.FC<ProductsPageProps> = ({
   initialCategory,
   initialSearch,
 }) => {
-  const { products, categories, trendingProductIds } = useStore();
+  const { products, categories } = useStore();
 
   const [selectedCategory, setSelectedCategory] = useState<string>(initialCategory || 'all');
   const [searchQuery, setSearchQuery] = useState<string>(initialSearch || '');
@@ -32,74 +31,73 @@ export const ProductsPage: React.FC<ProductsPageProps> = ({
   const [inStockOnly, setInStockOnly] = useState<boolean>(false);
   const [sortBy, setSortBy] = useState<'featured' | 'price-low' | 'price-high' | 'rating' | 'discount'>('featured');
   const [showMobileFilters, setShowMobileFilters] = useState<boolean>(false);
-  const [shareToast, setShareToast] = useState<string | null>(null);
 
   // Available brands in the store
   const allBrands = useMemo(() => {
     return Array.from(new Set(products.map((p) => p.brand))).filter(Boolean);
   }, [products]);
 
-  // Matches category taking into account multiple categoryIds / categories / primary category
-  const matchesCategory = (p: typeof products[0], targetCat: string) => {
-    if (targetCat === 'all') return true;
-    if (targetCat === 'trending') {
-      return trendingProductIds.length > 0 ? trendingProductIds.includes(p.id) : Boolean(p.isTrending);
-    }
-    const clean = targetCat.toLowerCase().trim();
-    const catObj = categories.find(
-      (c) =>
-        c.slug.toLowerCase() === clean ||
-        c.id.toLowerCase() === clean ||
-        c.name.toLowerCase() === clean
-    );
-    const targetSlugs = [clean];
-    if (catObj) {
-      targetSlugs.push(catObj.id.toLowerCase(), catObj.slug.toLowerCase(), catObj.name.toLowerCase());
-    }
+  // Helper: check if a product belongs to a given category slug or id
+  const matchesCategory = (p: Product, catSlug: string): boolean => {
+    if (catSlug === 'all') return true;
+    const catObj = categories.find((c) => c.slug === catSlug || c.id === catSlug);
+    const targetSlug = catObj?.slug || catSlug;
+    const targetId = catObj?.id;
+    const targetName = catObj?.name;
 
-    const pCatIds = (p.categoryIds || []).map((c) => c.toLowerCase());
-    const pCats = (p.categories || []).map((c) => c.toLowerCase());
-    const pPrimaryCat = (p.category || '').toLowerCase();
-    const pSubCat = (p.subCategory || '').toLowerCase();
+    const assignedCats = [
+      p.category,
+      ...(p.categoryIds || []),
+      ...(p.categories || []),
+    ].filter(Boolean);
 
-    return targetSlugs.some(
-      (s) =>
-        pCatIds.includes(s) ||
-        pCats.includes(s) ||
-        pPrimaryCat === s ||
-        pSubCat === s
-    );
+    return assignedCats.some((c) => {
+      const val = c.toLowerCase();
+      return (
+        val === targetSlug.toLowerCase() ||
+        (targetId && val === targetId.toLowerCase()) ||
+        (targetName && val === targetName.toLowerCase())
+      );
+    });
   };
 
-  // Filtered & de-duplicated products
-  const filteredProducts = useMemo(() => {
-    // Prevent duplicate product cards if category queries return the same product
-    const seen = new Set<string>();
-    const uniqueProducts = products.filter((p) => {
-      if (seen.has(p.id)) return false;
-      seen.add(p.id);
-      return true;
-    });
+  // Accurate product count for category badges
+  const getCategoryCount = (catSlug: string): number => {
+    return products.filter((p) => p.isActive && matchesCategory(p, catSlug)).length;
+  };
 
-    return uniqueProducts
+  // Filtered & sorted products (strictly deduplicated by product.id)
+  const filteredProducts = useMemo(() => {
+    const seen = new Set<string>();
+    return products
       .filter((p) => {
         if (!p.isActive) return false;
-        if (selectedCategory !== 'all' && !matchesCategory(p, selectedCategory)) return false;
+        if (seen.has(p.id)) return false;
+
+        // Multi-category match
+        if (selectedCategory !== 'all' && !matchesCategory(p, selectedCategory)) {
+          return false;
+        }
+
+        // Search match (including multiple categories)
         if (searchQuery.trim()) {
           const q = searchQuery.toLowerCase();
           const match =
             p.name.toLowerCase().includes(q) ||
             p.brand.toLowerCase().includes(q) ||
             p.category.toLowerCase().includes(q) ||
-            (p.categories && p.categories.some((c) => c.toLowerCase().includes(q))) ||
-            (p.categoryIds && p.categoryIds.some((c) => c.toLowerCase().includes(q))) ||
+            p.categoryIds?.some((c) => c.toLowerCase().includes(q)) ||
+            p.categories?.some((c) => c.toLowerCase().includes(q)) ||
             p.description.toLowerCase().includes(q);
           if (!match) return false;
         }
+
         if (selectedBrands.length > 0 && !selectedBrands.includes(p.brand)) return false;
         if (p.sellingPrice > maxPrice) return false;
         if (p.rating < minRating) return false;
         if (inStockOnly && p.stock <= 0) return false;
+
+        seen.add(p.id);
         return true;
       })
       .sort((a, b) => {
@@ -109,21 +107,7 @@ export const ProductsPage: React.FC<ProductsPageProps> = ({
         if (sortBy === 'discount') return b.discountPercent - a.discountPercent;
         return (b.isFeatured ? 1 : 0) - (a.isFeatured ? 1 : 0);
       });
-  }, [products, selectedCategory, searchQuery, selectedBrands, minRating, maxPrice, inStockOnly, sortBy, categories, trendingProductIds]);
-
-  const handleShareCategory = async () => {
-    if (selectedCategory === 'trending') {
-      const res = await shareTrending();
-      setShareToast(res.message);
-    } else {
-      const catObj = categories.find((c) => c.slug === selectedCategory || c.id === selectedCategory);
-      const res = await shareCategory(
-        catObj ? { slug: catObj.slug, name: catObj.name } : { slug: selectedCategory, name: selectedCategory }
-      );
-      setShareToast(res.message);
-    }
-    setTimeout(() => setShareToast(null), 2500);
-  };
+  }, [products, categories, selectedCategory, searchQuery, selectedBrands, minRating, maxPrice, inStockOnly, sortBy]);
 
   const toggleBrand = (brand: string) => {
     setSelectedBrands((prev) =>
@@ -154,31 +138,11 @@ export const ProductsPage: React.FC<ProductsPageProps> = ({
       {/* Page Title & Sort Bar */}
       <div className="flex flex-col sm:flex-row sm:items-center justify-between pb-6 border-b border-slate-200 gap-4">
         <div>
-          <div className="flex items-center gap-3">
-            <h1 className="text-2xl font-black text-slate-900 tracking-tight">
-              {selectedCategory === 'all'
-                ? 'All Products'
-                : selectedCategory === 'trending'
-                ? 'Trending Deals'
-                : categories.find((c) => c.slug === selectedCategory || c.id === selectedCategory)?.name || 'Catalog'}
-            </h1>
-            {selectedCategory !== 'all' && (
-              <div className="relative">
-                <button
-                  onClick={handleShareCategory}
-                  className="p-1.5 rounded-lg border border-slate-200 hover:border-indigo-300 text-slate-600 hover:text-indigo-600 bg-white shadow-xs transition-all active:scale-95 cursor-pointer"
-                  title="Share Category Link"
-                >
-                  <Share2 className="w-4 h-4" />
-                </button>
-                {shareToast && (
-                  <div className="absolute left-8 top-0 bg-slate-900 text-white text-[11px] font-bold px-2.5 py-1 rounded-md shadow-lg whitespace-nowrap z-20">
-                    {shareToast}
-                  </div>
-                )}
-              </div>
-            )}
-          </div>
+          <h1 className="text-2xl font-black text-slate-900 tracking-tight">
+            {selectedCategory === 'all'
+              ? 'All Products'
+              : categories.find((c) => c.slug === selectedCategory)?.name || 'Catalog'}
+          </h1>
           <p className="text-xs text-slate-500 mt-1">
             Showing <strong className="text-slate-900">{filteredProducts.length}</strong> items
             {searchQuery ? ` matching "${searchQuery}"` : ''}
@@ -261,27 +225,38 @@ export const ProductsPage: React.FC<ProductsPageProps> = ({
               <div className="space-y-1.5 max-h-48 overflow-y-auto pr-1">
                 <button
                   onClick={() => setSelectedCategory('all')}
-                  className={`block w-full text-left px-2.5 py-1.5 rounded-lg text-xs font-medium transition-colors ${
+                  className={`w-full flex items-center justify-between px-2.5 py-1.5 rounded-lg text-xs font-medium transition-colors ${
                     selectedCategory === 'all'
                       ? 'bg-indigo-50 text-indigo-700 font-bold'
                       : 'text-slate-600 hover:bg-slate-50'
                   }`}
                 >
-                  All Categories
+                  <span>All Categories</span>
+                  <span className="text-[10px] px-1.5 py-0.5 rounded-full bg-slate-100 text-slate-600 font-bold">
+                    {getCategoryCount('all')}
+                  </span>
                 </button>
-                {categories.map((c) => (
-                  <button
-                    key={c.id}
-                    onClick={() => setSelectedCategory(c.slug)}
-                    className={`block w-full text-left px-2.5 py-1.5 rounded-lg text-xs font-medium transition-colors ${
-                      selectedCategory === c.slug
-                        ? 'bg-indigo-50 text-indigo-700 font-bold'
-                        : 'text-slate-600 hover:bg-slate-50'
-                    }`}
-                  >
-                    {c.name}
-                  </button>
-                ))}
+                {categories.map((c) => {
+                  const count = getCategoryCount(c.slug);
+                  return (
+                    <button
+                      key={c.id}
+                      onClick={() => setSelectedCategory(c.slug)}
+                      className={`w-full flex items-center justify-between px-2.5 py-1.5 rounded-lg text-xs font-medium transition-colors ${
+                        selectedCategory === c.slug
+                          ? 'bg-indigo-50 text-indigo-700 font-bold'
+                          : 'text-slate-600 hover:bg-slate-50'
+                      }`}
+                    >
+                      <span className="truncate pr-1">{c.name}</span>
+                      <span className={`text-[10px] px-1.5 py-0.5 rounded-full font-bold ${
+                        selectedCategory === c.slug ? 'bg-indigo-200/60 text-indigo-800' : 'bg-slate-100 text-slate-500'
+                      }`}>
+                        {count}
+                      </span>
+                    </button>
+                  );
+                })}
               </div>
             </div>
 
@@ -423,21 +398,29 @@ export const ProductsPage: React.FC<ProductsPageProps> = ({
                 <div className="space-y-1">
                   <button
                     onClick={() => setSelectedCategory('all')}
-                    className={`block w-full text-left px-2 py-1.5 rounded-lg text-xs ${
+                    className={`w-full flex items-center justify-between px-2 py-1.5 rounded-lg text-xs ${
                       selectedCategory === 'all' ? 'bg-indigo-50 font-bold text-indigo-700' : 'text-slate-600'
                     }`}
                   >
-                    All Categories
+                    <span>All Categories</span>
+                    <span className="text-[10px] px-1.5 py-0.5 rounded-full bg-slate-100 text-slate-600 font-bold">
+                      {getCategoryCount('all')}
+                    </span>
                   </button>
                   {categories.map((c) => (
                     <button
                       key={c.id}
                       onClick={() => setSelectedCategory(c.slug)}
-                      className={`block w-full text-left px-2 py-1.5 rounded-lg text-xs ${
+                      className={`w-full flex items-center justify-between px-2 py-1.5 rounded-lg text-xs ${
                         selectedCategory === c.slug ? 'bg-indigo-50 font-bold text-indigo-700' : 'text-slate-600'
                       }`}
                     >
-                      {c.name}
+                      <span className="truncate pr-1">{c.name}</span>
+                      <span className={`text-[10px] px-1.5 py-0.5 rounded-full font-bold ${
+                        selectedCategory === c.slug ? 'bg-indigo-200/60 text-indigo-800' : 'bg-slate-100 text-slate-500'
+                      }`}>
+                        {getCategoryCount(c.slug)}
+                      </span>
                     </button>
                   ))}
                 </div>

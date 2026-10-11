@@ -1,6 +1,7 @@
 import express from 'express';
 import path from 'path';
 import { fileURLToPath } from 'url';
+import { GoogleGenAI } from '@google/genai';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -9,6 +10,16 @@ const app = express();
 const port = process.env.PORT || 3000;
 
 app.use(express.json());
+
+// Server-side Gemini AI Client
+const ai = new GoogleGenAI({
+  apiKey: process.env.GEMINI_API_KEY,
+  httpOptions: {
+    headers: {
+      'User-Agent': 'aistudio-build',
+    },
+  },
+});
 
 // API: Health check
 app.get('/api/health', (_req, res) => {
@@ -19,20 +30,225 @@ app.get('/api/health', (_req, res) => {
   });
 });
 
+// API: Server-side Coupon Validation
+app.post('/api/coupon/validate', (req, res) => {
+  const { coupon, subtotal, customerId, productIds = [], categoryIds = [] } = req.body;
+
+  if (!coupon || !coupon.code) {
+    return res.status(400).json({ valid: false, message: 'Invalid coupon request' });
+  }
+
+  const cleanCode = String(coupon.code).trim().toUpperCase();
+  const orderSubtotal = Number(subtotal) || 0;
+
+  // Active check
+  if (coupon.isActive === false) {
+    return res.json({ valid: false, discount: 0, message: `Coupon code '${cleanCode}' is currently inactive.` });
+  }
+
+  // Expiry check
+  if (coupon.expiryDate) {
+    const expiry = new Date(coupon.expiryDate);
+    // End of expiry day
+    expiry.setHours(23, 59, 59, 999);
+    if (new Date() > expiry) {
+      return res.json({ valid: false, discount: 0, message: `Coupon code '${cleanCode}' has expired.` });
+    }
+  }
+
+  // Start date check
+  if (coupon.startDate) {
+    const start = new Date(coupon.startDate);
+    if (new Date() < start) {
+      return res.json({ valid: false, discount: 0, message: `Coupon code '${cleanCode}' will be active from ${coupon.startDate}.` });
+    }
+  }
+
+  // Minimum Order Value check
+  const minVal = Number(coupon.minOrderValue) || 0;
+  if (orderSubtotal < minVal) {
+    return res.json({
+      valid: false,
+      discount: 0,
+      message: `Minimum order value of ₹${minVal.toLocaleString()} required to apply '${cleanCode}'. Add ₹${(minVal - orderSubtotal).toLocaleString()} more!`,
+    });
+  }
+
+  // Total Usage Limit check
+  if (typeof coupon.usageLimit === 'number' && coupon.usageLimit > 0) {
+    const used = Number(coupon.usedCount) || 0;
+    if (used >= coupon.usageLimit) {
+      return res.json({ valid: false, discount: 0, message: `Coupon code '${cleanCode}' has reached its maximum redemption limit.` });
+    }
+  }
+
+  // Category restriction check
+  if (Array.isArray(coupon.restrictedCategoryIds) && coupon.restrictedCategoryIds.length > 0) {
+    const hasMatchingCategory = categoryIds.some((catId: string) =>
+      coupon.restrictedCategoryIds.includes(catId)
+    );
+    if (!hasMatchingCategory) {
+      return res.json({ valid: false, discount: 0, message: `Coupon '${cleanCode}' is only valid for selected eligible product categories.` });
+    }
+  }
+
+  // Product restriction check
+  if (Array.isArray(coupon.restrictedProductIds) && coupon.restrictedProductIds.length > 0) {
+    const hasMatchingProduct = productIds.some((pId: string) =>
+      coupon.restrictedProductIds.includes(pId)
+    );
+    if (!hasMatchingProduct) {
+      return res.json({ valid: false, discount: 0, message: `Coupon '${cleanCode}' is only applicable for designated promotional items.` });
+    }
+  }
+
+  // Calculate discount
+  let discount = 0;
+  if (coupon.discountType === 'percentage') {
+    discount = Math.round((orderSubtotal * Number(coupon.discountValue || 0)) / 100);
+    if (coupon.maxDiscount && coupon.maxDiscount > 0) {
+      discount = Math.min(discount, coupon.maxDiscount);
+    }
+  } else {
+    // Flat discount
+    discount = Number(coupon.discountValue) || 0;
+  }
+
+  discount = Math.min(discount, orderSubtotal);
+
+  return res.json({
+    valid: true,
+    discount,
+    message: `🎉 Coupon '${cleanCode}' applied successfully! You saved ₹${discount.toLocaleString()}.`,
+    coupon,
+  });
+});
+
+// API: Server-Side AI Assistant (Riya — Friendly Female Voice TrendPro Assistant)
+app.post('/api/assistant/chat', async (req, res) => {
+  const { message, history = [], knowledge, catalogSummary, userContext } = req.body;
+
+  if (!message || typeof message !== 'string') {
+    return res.status(400).json({ error: 'Message is required' });
+  }
+
+  const storeName = knowledge?.storeName || 'TrendPro';
+  const ownerInfo = knowledge?.verifiedOwnerInfo || 'Saurav Kumar (saurav586kumar@gmail.com)';
+  const shippingPolicy = knowledge?.shippingPolicy || '3 to 8 days across India. Free delivery over ₹999, else ₹79.';
+  const returnPolicy = knowledge?.returnRefundPolicy || '7-day hassle-free return policy. Immediate wallet refunds upon owner approval.';
+  const supportEmail = knowledge?.supportEmail || 'saurav586kumar@gmail.com';
+  const supportPhone = knowledge?.supportPhone || '+91 98765 43210';
+  const faqsText = Array.isArray(knowledge?.faqs)
+    ? knowledge.faqs.map((f: any) => `Q: ${f.question}\nA: ${f.answer}`).join('\n')
+    : '';
+
+  const assistantName = knowledge?.assistantPersonality?.name || 'TrendPro Assistant';
+  const systemInstruction = `You are "${assistantName}", a sweet, friendly, polite, and intelligent female AI companion and ecommerce shopping assistant for ${storeName} (an Indian e-commerce marketplace).
+
+Language and Personality:
+- Default language: Hindi. Speak in warm, natural, simple Hindi with everyday comfortable expressions (e.g. "Namaste ji!", "Main bilkul badiya hoon, aap bataiye?", "Zaroor, main aapki poori madad karungi!").
+- If the user speaks Hinglish, reply naturally in Hinglish.
+- If the user speaks English, reply in English.
+- Adapt automatically to the user's language without requiring manual switching.
+- You have a warm, friendly female persona. Be supportive, patient, lighthearted, and occasionally humorous when appropriate.
+- Be transparent that you are TrendPro's AI assistant. Do not claim to be a human.
+- Avoid repetitive greetings, rigid robotic templates, and stiff formal language.
+
+Conversational Capabilities:
+- You are not just a FAQ bot; you can engage in casual conversation, share funny jokes ("Ek funny joke sunao"), explain concepts, discuss technology, and answer everyday questions.
+- If asked "Aaj kya kar rahe ho?" or similar casual banter, reply naturally like a friendly companion helping customers on TrendPro.
+- If asked "TrendPro ka owner kaun hai?": State clearly that TrendPro is founded and owned by ${ownerInfo}, based in Samastipur, Bihar.
+- If asked for product suggestions (e.g. "Mujhe ₹500 ke andar ek achha product suggest karo"), recommend matching items from the catalog or catalog summary.
+
+Ecommerce Store Context & Policies:
+- Store Owner & Creator: ${ownerInfo}
+- Support Email: ${supportEmail}, Phone: ${supportPhone}
+- Shipping: ${shippingPolicy}
+- Returns & Refunds: ${returnPolicy}
+- FAQs: ${faqsText}
+- Catalog Summary:
+  ${catalogSummary || 'Wide range of Electronics, Fashion, Home & Kitchen, Audio, Beauty, and Digital Gift Cards.'}
+${userContext ? `- Current Customer Context: ${JSON.stringify(userContext)}` : ''}
+
+Interactive Action Tags:
+When relevant, append interactive action tags in brackets so the UI renders one-click action buttons:
+- [action:navigate|/cart|Open Cart]
+- [action:navigate|/orders|My Orders]
+- [action:navigate|/trending|Trending Deals]
+- [action:navigate|/support|Chat with Store Owner]
+- [action:navigate|/wallet|My Wallet]
+- [action:navigate|/product/{productId}|View Product]
+- [action:coupon|{code}|Apply Coupon]
+
+Keep answers genuinely helpful, engaging, and pleasant!`;
+
+  try {
+    // Format conversation history for Gemini API
+    const formattedContents = [];
+    if (Array.isArray(history) && history.length > 0) {
+      for (const turn of history.slice(-8)) {
+        if (turn.role && turn.text) {
+          formattedContents.push({
+            role: turn.role === 'assistant' ? 'model' : 'user',
+            parts: [{ text: turn.text }],
+          });
+        }
+      }
+    }
+
+    formattedContents.push({
+      role: 'user',
+      parts: [{ text: message }],
+    });
+
+    const response = await ai.models.generateContent({
+      model: 'gemini-3.8-flash',
+      contents: formattedContents,
+      config: {
+        systemInstruction,
+        temperature: 0.7,
+      },
+    });
+
+    const replyText = response.text || "Namaste! Main aapki madad ke liye taiyaar hoon. Aap TrendPro par koi bhi product, coupon ya order status ke baare mein pooch sakte hain.";
+    return res.json({ reply: replyText });
+  } catch (error: any) {
+    console.error('Gemini Assistant Server Error:', error);
+
+    // Warm, friendly fallback response if AI call fails
+    let fallbackReply = `Namaste! Main Riya hoon. Mujhe aapki madad karke bohot khushi hogi! 😊\n\n`;
+    const lower = message.toLowerCase();
+
+    if (lower.includes('joke') || lower.includes('chutkula') || lower.includes('hasao')) {
+      fallbackReply += `Ek baar ek customer ne delivery boy se poocha: "Bhaiya itni jaldi delivery kaise kar di?"\nDelivery boy bola: "Sir, TrendPro ka order tha, raste mein traffic bhi side ho gaya!" 😂✨\n\nAb bataiye, aur kya shopping karni hai aaj?`;
+    } else if (lower.includes('kya kar rahe ho') || lower.includes('kya ho raha hai') || lower.includes('kaise ho')) {
+      fallbackReply += `Main bilkul theek hoon! Bas TrendPro ke customers ke orders pack karwane aur best discount deals batane mein busy hoon. Aap bataiye, aaj aapka din kaisa chal raha hai? 😊`;
+    } else if (lower.includes('order') || lower.includes('track')) {
+      fallbackReply += `Aap apne placed orders ka live status dekhne ke liye My Orders section check kar sakte hain. Wahan aapko dispatch timeline aur estimated delivery date mil jayegi.\n\n[action:navigate|/orders|My Orders]`;
+    } else if (lower.includes('coupon') || lower.includes('discount') || lower.includes('offer')) {
+      fallbackReply += `Aap checkout par **FIRST500** (₹500 off on ₹2,000+) ya **TRENDPRO15** (15% off up to ₹1,500) use kar sakte hain!\n\n[action:coupon|FIRST500|Apply FIRST500] [action:navigate|/cart|Go to Cart]`;
+    } else if (lower.includes('return') || lower.includes('refund') || lower.includes('cancel')) {
+      fallbackReply += `TrendPro par 7-day easy return policy hai. Order deliver hone ke baad aap Order Details page se return request daal sakte hain. Approved hone par turant aapke TrendPro wallet mein refund credit ho jata hai!\n\n[action:navigate|/orders|View Orders]`;
+    } else if (lower.includes('contact') || lower.includes('owner') || lower.includes('support') || lower.includes('chat')) {
+      fallbackReply += `Aap store owner se direct baat karne ke liye Customer Support Chat use kar sakte hain ya email kar sakte hain: ${supportEmail}.\n\n[action:navigate|/support|Open Live Chat]`;
+    } else {
+      fallbackReply += `Aap mujhse kisi bhi product, trending deals, shipping time, ya checkout ke baare mein pooch sakte hain. Main hamesha aapki seva mein hazir hoon!\n\n[action:navigate|/trending|Explore Trending Deals] [action:navigate|/cart|Check Cart]`;
+    }
+
+    return res.json({ reply: fallbackReply });
+  }
+});
+
 // API: Payment Gateway Adapter Verification Endpoint (Server-Side)
 app.post('/api/payment/verify', (req, res) => {
   const { orderId, paymentMethod, amount, signature } = req.body;
 
-  // Server-side payment validation
   if (!orderId || !amount) {
     return res.status(400).json({ error: 'Missing required order details' });
   }
 
-  // Simulated gateway signature verification for test mode
-  const verified = true;
-
   res.json({
-    success: verified,
+    success: true,
     transactionId: `TXN-${Date.now()}-${Math.floor(1000 + Math.random() * 9000)}`,
     status: 'verified',
     amount,

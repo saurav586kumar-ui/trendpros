@@ -6,7 +6,7 @@ export interface Product {
   brand: string;
   category: string;
   categories?: string[]; // Multiple categories support
-  categoryIds?: string[]; // Category ID array support
+  categoryIds?: string[]; // Consistent array of assigned category IDs
   subCategory?: string;
   description: string;
   highlights: string[];
@@ -36,23 +36,6 @@ export interface Product {
   returnPolicyDays?: number;
   createdAt: string;
   updatedAt?: string;
-}
-
-export interface RestockSubscription {
-  id: string;
-  customerUid: string;
-  customerEmail: string;
-  productId: string;
-  productName: string;
-  variantId?: string | null;
-  createdAt: string;
-  resolved: boolean;
-  notifiedAt?: string;
-}
-
-export interface TrendingConfig {
-  productIds: string[];
-  updatedAt: string;
 }
 
 export interface Category {
@@ -127,10 +110,15 @@ export interface Voucher {
   discountValue: number;
   minOrderValue: number;
   maxDiscount?: number;
+  startDate?: string;
   expiryDate: string;
   isActive: boolean;
   usageLimit?: number;
+  perCustomerLimit?: number;
   usedCount: number;
+  restrictedCategoryIds?: string[];
+  restrictedProductIds?: string[];
+  allowStacking?: boolean;
 }
 
 export type OrderStatus =
@@ -155,7 +143,7 @@ export interface OrderItem {
   image: string;
   price: number;
   quantity: number;
-  variant?: string;
+  variant?: string | null;
   isGiftVoucher?: boolean;
 }
 
@@ -201,7 +189,7 @@ export interface Order {
     subtotal: number;
     discount: number;
     deliveryCharge: number;
-    voucherCode?: string;
+    voucherCode?: string | null;
     voucherDiscount: number;
     walletUsed: number;
     total: number;
@@ -215,9 +203,9 @@ export interface Order {
   estimatedDelivery?: string;
   timeline: OrderTimeline[];
   isGiftVoucherOrder?: boolean;
-  giftCardDetails?: GeneratedGiftCard;
-  cancelRequest?: CancelRequest;
-  returnRequest?: ReturnRequest;
+  giftCardDetails?: GeneratedGiftCard | null;
+  cancelRequest?: CancelRequest | null;
+  returnRequest?: ReturnRequest | null;
   createdAt: string;
   updatedAt: string;
 }
@@ -233,7 +221,10 @@ export interface Review {
   comment?: string;
   images?: string[];
   isVerifiedPurchase: boolean;
+  isHidden?: boolean;
+  isOwnerSeeded?: boolean;
   createdAt: string;
+  updatedAt?: string;
 }
 
 export interface StoreConfig {
@@ -326,4 +317,91 @@ export interface StoreAnnouncementConfig {
   couponCode: string;
   discountText: string;
   shippingNote: string;
+}
+
+export interface RestockSubscription {
+  id: string;
+  userId: string;
+  customerEmail: string;
+  customerName?: string;
+  productId: string;
+  productName?: string;
+  variant?: string;
+  createdAt: string;
+  status: 'pending' | 'notified' | 'cancelled';
+}
+
+export interface TrendingProductItem {
+  productId: string;
+  priority: number;
+}
+
+export interface TrendingConfig {
+  productIds: string[];
+  items: TrendingProductItem[];
+  updatedAt: string;
+}
+
+export interface HomepageSectionConfig {
+  id: string;
+  name: string;
+  isVisible: boolean;
+  order: number;
+}
+
+export interface WebsiteConfig {
+  primaryColor: string;
+  fontFamily: string;
+  homepageSections: HomepageSectionConfig[];
+  aboutUsContent?: string;
+  privacyPolicyContent?: string;
+  termsContent?: string;
+  contactEmail?: string;
+  contactPhone?: string;
+  contactAddress?: string;
+  revision: number;
+  updatedAt: string;
+}
+
+export interface AssistantFAQ {
+  question: string;
+  answer: string;
+}
+
+export interface AIKnowledgeConfig {
+  storeName: string;
+  tagline: string;
+  verifiedOwnerInfo: string;
+  supportEmail: string;
+  supportPhone: string;
+  supportHours: string;
+  dispatchHubAddress: string;
+  shippingPolicy: string;
+  returnRefundPolicy: string;
+  couponRules: string;
+  walletInstructions: string;
+  faqs: AssistantFAQ[];
+  assistantPersonality: {
+    name: string;
+    tone: 'warm_friendly_female' | 'professional' | 'casual';
+    languages: string;
+    welcomeMessage: string;
+    suggestedQuestions: string[];
+    voiceEnabled: boolean;
+    defaultSpeechRate: number;
+    defaultSpeechPitch: number;
+  };
+  revision: number;
+  updatedAt: string;
+}
+
+export interface MasterSetSummary {
+  hasPendingChanges: boolean;
+  itemsToSave: {
+    section: string;
+    description: string;
+    count?: number;
+  }[];
+  revision: number;
+  lastConfirmedAt?: string;
 }

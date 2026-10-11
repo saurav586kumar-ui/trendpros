@@ -27,6 +27,7 @@ export const WalletPage: React.FC<WalletPageProps> = ({ onNavigate }) => {
   const [giftCardPin, setGiftCardPin] = useState('');
   const [isProcessing, setIsProcessing] = useState(false);
   const [redeemResult, setRedeemResult] = useState('');
+  const [copiedCode, setCopiedCode] = useState('');
 
   if (!currentUser) {
     return (
@@ -56,7 +57,7 @@ export const WalletPage: React.FC<WalletPageProps> = ({ onNavigate }) => {
       setRedeemResult(`Successfully added ₹${topUpAmount.toLocaleString()} to your TrendPro wallet!`);
       setTimeout(() => setRedeemResult(''), 4000);
     } catch (err: any) {
-      alert(err.message || 'Error processing top-up');
+      setRedeemResult(`Error: ${err.message || 'Error processing top-up'}`);
     } finally {
       setIsProcessing(false);
     }
@@ -255,11 +256,14 @@ export const WalletPage: React.FC<WalletPageProps> = ({ onNavigate }) => {
                 <button
                   onClick={() => {
                     navigator.clipboard.writeText(v.code);
-                    alert(`Coupon code ${v.code} copied!`);
+                    setCopiedCode(v.code);
+                    setTimeout(() => setCopiedCode(''), 3000);
                   }}
-                  className="text-xs font-bold text-indigo-600 hover:text-indigo-800"
+                  className={`text-xs font-bold transition-colors cursor-pointer ${
+                    copiedCode === v.code ? 'text-emerald-600' : 'text-indigo-600 hover:text-indigo-800'
+                  }`}
                 >
-                  Copy
+                  {copiedCode === v.code ? '✓ Copied' : 'Copy'}
                 </button>
               </div>
             ))}

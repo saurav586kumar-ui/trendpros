@@ -1,8 +1,28 @@
 import React, { createContext, useContext, useEffect, useState } from 'react';
 import { doc, getDoc, setDoc } from 'firebase/firestore';
-import { db, handleFirestoreError, OperationType } from '../config/firebase';
+import { db, handleFirestoreError, OperationType, sanitizeForFirestore } from '../config/firebase';
 import { CartItem, Product } from '../types';
 import { useAuth } from './AuthContext';
+
+export const cleanCartItem = (item: Partial<CartItem>): CartItem => {
+  const cleaned: CartItem = {
+    productId: String(item.productId || ''),
+    name: String(item.name || ''),
+    price: Number(item.price) || 0,
+    originalPrice: Number(item.originalPrice) || 0,
+    image: String(item.image || ''),
+    brand: String(item.brand || ''),
+    quantity: Math.max(1, Number(item.quantity) || 1),
+    stock: typeof item.stock === 'number' ? item.stock : 99,
+  };
+  if (item.selectedVariant) {
+    cleaned.selectedVariant = item.selectedVariant;
+  }
+  if (item.isGiftVoucher) {
+    cleaned.isGiftVoucher = true;
+  }
+  return cleaned;
+};
 
 interface CartContextType {
   cart: CartItem[];
@@ -35,7 +55,9 @@ export const CartProvider: React.FC<{ children: React.ReactNode }> = ({ children
   const [cart, setCart] = useState<CartItem[]>(() => {
     try {
       const saved = localStorage.getItem(GUEST_CART_KEY);
-      return saved ? JSON.parse(saved) : [];
+      if (!saved) return [];
+      const parsed = JSON.parse(saved);
+      return Array.isArray(parsed) ? parsed.map(cleanCartItem) : [];
     } catch {
       return [];
     }
@@ -44,7 +66,9 @@ export const CartProvider: React.FC<{ children: React.ReactNode }> = ({ children
   const [wishlist, setWishlist] = useState<string[]>(() => {
     try {
       const saved = localStorage.getItem(GUEST_WISHLIST_KEY);
-      return saved ? JSON.parse(saved) : [];
+      if (!saved) return [];
+      const parsed = JSON.parse(saved);
+      return Array.isArray(parsed) ? parsed.filter((id) => typeof id === 'string' && id.trim().length > 0) : [];
     } catch {
       return [];
     }
@@ -68,40 +92,47 @@ export const CartProvider: React.FC<{ children: React.ReactNode }> = ({ children
 
         let remoteCart: CartItem[] = [];
         if (cartSnap.exists()) {
-          remoteCart = cartSnap.data().items || [];
+          const rawItems = cartSnap.data().items;
+          if (Array.isArray(rawItems)) {
+            remoteCart = rawItems.map(cleanCartItem);
+          }
         }
 
         // Merge guest cart with remote cart
         const mergedCartMap = new Map<string, CartItem>();
-        remoteCart.forEach((item) => mergedCartMap.set(item.productId, item));
+        remoteCart.forEach((item) => mergedCartMap.set(item.productId, cleanCartItem(item)));
 
         // Add guest cart items if not duplicate, or sum quantity up to stock
         cart.forEach((guestItem) => {
-          if (mergedCartMap.has(guestItem.productId)) {
-            const existing = mergedCartMap.get(guestItem.productId)!;
-            const newQty = Math.min(existing.quantity + guestItem.quantity, existing.stock);
-            mergedCartMap.set(guestItem.productId, { ...existing, quantity: newQty });
+          const cleanedGuest = cleanCartItem(guestItem);
+          if (mergedCartMap.has(cleanedGuest.productId)) {
+            const existing = mergedCartMap.get(cleanedGuest.productId)!;
+            const newQty = Math.min(existing.quantity + cleanedGuest.quantity, existing.stock);
+            mergedCartMap.set(cleanedGuest.productId, cleanCartItem({ ...existing, quantity: newQty }));
           } else {
-            mergedCartMap.set(guestItem.productId, guestItem);
+            mergedCartMap.set(cleanedGuest.productId, cleanedGuest);
           }
         });
 
-        const mergedCart = Array.from(mergedCartMap.values());
+        const mergedCart = Array.from(mergedCartMap.values()).map(cleanCartItem);
         setCart(mergedCart);
-        await setDoc(cartRef, { items: mergedCart, updatedAt: new Date().toISOString() });
+        await setDoc(cartRef, sanitizeForFirestore({ items: mergedCart, updatedAt: new Date().toISOString() }));
         localStorage.removeItem(GUEST_CART_KEY);
 
         // Sync wishlist
         let remoteWishlist: string[] = [];
         if (wishlistSnap.exists()) {
-          remoteWishlist = wishlistSnap.data().productIds || [];
+          const rawWishlist = wishlistSnap.data().productIds;
+          if (Array.isArray(rawWishlist)) {
+            remoteWishlist = rawWishlist.filter((id) => typeof id === 'string' && id.trim().length > 0);
+          }
         }
-        const mergedWishlist = Array.from(new Set([...remoteWishlist, ...wishlist]));
+        const mergedWishlist = Array.from(new Set([...remoteWishlist, ...wishlist])).filter((id) => typeof id === 'string' && id.trim().length > 0);
         setWishlist(mergedWishlist);
-        await setDoc(wishlistRef, { productIds: mergedWishlist, updatedAt: new Date().toISOString() });
+        await setDoc(wishlistRef, sanitizeForFirestore({ productIds: mergedWishlist, updatedAt: new Date().toISOString() }));
         localStorage.removeItem(GUEST_WISHLIST_KEY);
       } catch (error) {
-        handleFirestoreError(error, OperationType.GET, `carts/${currentUser.uid}`);
+        handleFirestoreError(error, OperationType.WRITE, `carts/${currentUser.uid}`);
       }
     };
 
@@ -110,31 +141,33 @@ export const CartProvider: React.FC<{ children: React.ReactNode }> = ({ children
 
   // Persist cart changes
   const saveCart = async (newCart: CartItem[]) => {
-    setCart(newCart);
+    const cleanedCart = newCart.map(cleanCartItem);
+    setCart(cleanedCart);
     if (currentUser) {
       try {
         const cartRef = doc(db, 'carts', currentUser.uid);
-        await setDoc(cartRef, { items: newCart, updatedAt: new Date().toISOString() });
+        await setDoc(cartRef, sanitizeForFirestore({ items: cleanedCart, updatedAt: new Date().toISOString() }));
       } catch (error) {
         handleFirestoreError(error, OperationType.WRITE, `carts/${currentUser.uid}`);
       }
     } else {
-      localStorage.setItem(GUEST_CART_KEY, JSON.stringify(newCart));
+      localStorage.setItem(GUEST_CART_KEY, JSON.stringify(cleanedCart));
     }
   };
 
   // Persist wishlist changes
   const saveWishlist = async (newWishlist: string[]) => {
-    setWishlist(newWishlist);
+    const cleanedWishlist = (newWishlist || []).filter((id) => typeof id === 'string' && id.trim().length > 0);
+    setWishlist(cleanedWishlist);
     if (currentUser) {
       try {
         const wishlistRef = doc(db, 'wishlists', currentUser.uid);
-        await setDoc(wishlistRef, { productIds: newWishlist, updatedAt: new Date().toISOString() });
+        await setDoc(wishlistRef, sanitizeForFirestore({ productIds: cleanedWishlist, updatedAt: new Date().toISOString() }));
       } catch (error) {
         handleFirestoreError(error, OperationType.WRITE, `wishlists/${currentUser.uid}`);
       }
     } else {
-      localStorage.setItem(GUEST_WISHLIST_KEY, JSON.stringify(newWishlist));
+      localStorage.setItem(GUEST_WISHLIST_KEY, JSON.stringify(cleanedWishlist));
     }
   };
 
@@ -145,14 +178,20 @@ export const CartProvider: React.FC<{ children: React.ReactNode }> = ({ children
     if (existingIndex > -1) {
       const existing = cart[existingIndex];
       const newQty = Math.min(existing.quantity + quantity, product.stock);
-      updatedCart = [...cart];
-      updatedCart[existingIndex] = {
+      const chosenVariant = variant || existing.selectedVariant;
+      const updatedItem: Partial<CartItem> = {
         ...existing,
         quantity: newQty,
-        selectedVariant: variant || existing.selectedVariant,
       };
+      if (chosenVariant) {
+        updatedItem.selectedVariant = chosenVariant;
+      } else {
+        delete updatedItem.selectedVariant;
+      }
+      updatedCart = [...cart];
+      updatedCart[existingIndex] = cleanCartItem(updatedItem);
     } else {
-      const newItem: CartItem = {
+      const newItemData: Partial<CartItem> = {
         productId: product.id,
         name: product.name,
         price: product.sellingPrice,
@@ -161,9 +200,14 @@ export const CartProvider: React.FC<{ children: React.ReactNode }> = ({ children
         brand: product.brand,
         quantity: Math.min(quantity, product.stock),
         stock: product.stock,
-        selectedVariant: variant,
       };
-      updatedCart = [...cart, newItem];
+      if (variant) {
+        newItemData.selectedVariant = variant;
+      }
+      if (product.isGiftVoucher) {
+        newItemData.isGiftVoucher = true;
+      }
+      updatedCart = [...cart, cleanCartItem(newItemData)];
     }
 
     saveCart(updatedCart);
@@ -212,7 +256,6 @@ export const CartProvider: React.FC<{ children: React.ReactNode }> = ({ children
       setCompareList(compareList.filter((id) => id !== productId));
     } else {
       if (compareList.length >= 4) {
-        alert('You can compare a maximum of 4 products at once.');
         return;
       }
       setCompareList([...compareList, productId]);

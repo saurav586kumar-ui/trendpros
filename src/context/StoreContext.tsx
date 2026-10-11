@@ -14,7 +14,7 @@ import {
   onSnapshot,
   runTransaction
 } from 'firebase/firestore';
-import { db, handleFirestoreError, OperationType } from '../config/firebase';
+import { db, handleFirestoreError, OperationType, sanitizeForFirestore } from '../config/firebase';
 import {
   Product,
   Category,
@@ -29,7 +29,11 @@ import {
   StoreAnnouncementConfig,
   GeneratedGiftCard,
   OrderStatus,
-  StoreConfig
+  StoreConfig,
+  WebsiteConfig,
+  AIKnowledgeConfig,
+  TrendingConfig,
+  RestockSubscription,
 } from '../types';
 import { useAuth, OWNER_EMAIL, OWNER_UID, getConversationId } from './AuthContext';
 import {
@@ -37,7 +41,10 @@ import {
   SAMPLE_CATEGORIES,
   SAMPLE_BANNERS,
   SAMPLE_VOUCHERS,
-  DEFAULT_ANNOUNCEMENT
+  DEFAULT_ANNOUNCEMENT,
+  DEFAULT_WEBSITE_CONFIG,
+  DEFAULT_AI_KNOWLEDGE,
+  DEFAULT_TRENDING_CONFIG,
 } from '../data/sampleCatalog';
 
 export const DEFAULT_STORE_CONFIG: StoreConfig = {
@@ -67,7 +74,11 @@ interface StoreContextType {
   chats: ChatConversation[];
   announcementConfig: StoreAnnouncementConfig;
   storeConfig: StoreConfig;
-  trendingProductIds: string[];
+  websiteConfig: WebsiteConfig;
+  aiKnowledgeConfig: AIKnowledgeConfig;
+  trendingConfig: TrendingConfig;
+  reviews: Review[];
+  restockSubscriptions: RestockSubscription[];
   loading: boolean;
   seedInitialDataToFirestore: () => Promise<void>;
   createOrder: (orderData: Omit<Order, 'id' | 'createdAt' | 'updatedAt' | 'timeline' | 'customerId'>) => Promise<string>;
@@ -85,12 +96,31 @@ interface StoreContextType {
   addBanner: (banner: Omit<Banner, 'id'>) => Promise<string>;
   updateBanner: (id: string, updates: Partial<Banner>) => Promise<void>;
   deleteBanner: (id: string) => Promise<void>;
-  updateTrendingProducts: (productIds: string[]) => Promise<void>;
-  subscribeToRestock: (productId: string, productName: string, variantId?: string) => Promise<void>;
-  unsubscribeFromRestock: (productId: string) => Promise<void>;
-  isSubscribedToRestock: (productId: string) => Promise<boolean>;
-  addReview: (productId: string, rating: number, title?: string, comment?: string, images?: string[]) => Promise<void>;
-  deleteReview: (reviewId: string, productId: string) => Promise<void>;
+  addVoucher: (voucherData: Omit<Voucher, 'id' | 'usedCount'>) => Promise<string>;
+  updateVoucher: (id: string, updates: Partial<Voucher>) => Promise<void>;
+  deleteVoucher: (id: string) => Promise<void>;
+  addReview: (
+    productId: string,
+    rating: number,
+    title?: string,
+    comment?: string,
+    images?: string[],
+    reviewerName?: string,
+    isOwnerSeeded?: boolean
+  ) => Promise<string>;
+  addBulkReviews: (
+    reviews: Array<{
+      productId: string;
+      rating: number;
+      title?: string;
+      comment: string;
+      reviewerName: string;
+      isVerifiedPurchase?: boolean;
+      isOwnerSeeded?: boolean;
+    }>
+  ) => Promise<{ succeeded: number; failed: number }>;
+  updateReview: (id: string, updates: Partial<Review>) => Promise<void>;
+  deleteReview: (id: string) => Promise<void>;
   getProductReviews: (productId: string) => Promise<Review[]>;
   sendSupportMessage: (message: string, orderId?: string, imageUrl?: string, imageFileName?: string) => Promise<string>;
   replySupportMessage: (userId: string, reply: string, orderId?: string, imageUrl?: string, imageFileName?: string) => Promise<string>;
@@ -101,6 +131,25 @@ interface StoreContextType {
   markAllNotificationsRead: () => Promise<void>;
   topUpWallet: (amount: number) => Promise<void>;
   updateAnnouncementConfig: (config: StoreAnnouncementConfig) => Promise<void>;
+  updateWebsiteConfig: (config: WebsiteConfig) => Promise<void>;
+  updateAIKnowledge: (config: AIKnowledgeConfig) => Promise<void>;
+  updateTrendingProducts: (items: { productId: string; priority: number }[]) => Promise<void>;
+  saveMasterSet: (payload: {
+    websiteConfig?: WebsiteConfig;
+    aiKnowledge?: AIKnowledgeConfig;
+    announcement?: StoreAnnouncementConfig;
+    companyConfig?: StoreConfig;
+    trendingItems?: { productId: string; priority: number }[];
+    banners?: Banner[];
+    vouchers?: Voucher[];
+    categories?: Category[];
+    products?: Product[];
+  }) => Promise<{ success: boolean; revision: number; savedSections: string[]; errors?: string[] }>;
+  subscribeRestock: (productId: string, variant?: string) => Promise<{ success: boolean; message: string; subId?: string }>;
+  cancelRestockSubscription: (subscriptionId: string) => Promise<void>;
+  isUserRestockSubscribed: (productId: string, variant?: string) => boolean;
+  getUserRestockSubscription: (productId: string, variant?: string) => RestockSubscription | undefined;
+  updateProductStockAndNotify: (productId: string, newStock: number) => Promise<void>;
 }
 
 const StoreContext = createContext<StoreContextType | undefined>(undefined);
@@ -117,7 +166,11 @@ export const StoreProvider: React.FC<{ children: React.ReactNode }> = ({ childre
   const [chats, setChats] = useState<ChatConversation[]>([]);
   const [announcementConfig, setAnnouncementConfig] = useState<StoreAnnouncementConfig>(DEFAULT_ANNOUNCEMENT);
   const [storeConfig, setStoreConfig] = useState<StoreConfig>(DEFAULT_STORE_CONFIG);
-  const [trendingProductIds, setTrendingProductIds] = useState<string[]>([]);
+  const [websiteConfig, setWebsiteConfig] = useState<WebsiteConfig>(DEFAULT_WEBSITE_CONFIG);
+  const [aiKnowledgeConfig, setAiKnowledgeConfig] = useState<AIKnowledgeConfig>(DEFAULT_AI_KNOWLEDGE);
+  const [trendingConfig, setTrendingConfig] = useState<TrendingConfig>(DEFAULT_TRENDING_CONFIG);
+  const [reviews, setReviews] = useState<Review[]>([]);
+  const [restockSubscriptions, setRestockSubscriptions] = useState<RestockSubscription[]>([]);
   const [loading, setLoading] = useState(true);
 
   // Sync store company config & announcement config
@@ -221,19 +274,63 @@ export const StoreProvider: React.FC<{ children: React.ReactNode }> = ({ childre
       () => setAnnouncementConfig(DEFAULT_ANNOUNCEMENT)
     );
 
-    // Trending products settings listener
+    // Website Config (layout, colors, fonts, sections) listener
+    const unsubWebsiteConfig = onSnapshot(
+      doc(db, 'storeSettings', 'websiteConfig'),
+      (snap) => {
+        if (snap.exists()) {
+          setWebsiteConfig({ ...DEFAULT_WEBSITE_CONFIG, ...snap.data() } as WebsiteConfig);
+        }
+      },
+      () => setWebsiteConfig(DEFAULT_WEBSITE_CONFIG)
+    );
+
+    // AI Knowledge & Personality listener
+    const unsubAiKnowledge = onSnapshot(
+      doc(db, 'storeSettings', 'aiKnowledge'),
+      (snap) => {
+        if (snap.exists()) {
+          setAiKnowledgeConfig({ ...DEFAULT_AI_KNOWLEDGE, ...snap.data() } as AIKnowledgeConfig);
+        }
+      },
+      () => setAiKnowledgeConfig(DEFAULT_AI_KNOWLEDGE)
+    );
+
+    // Trending Config listener
     const unsubTrending = onSnapshot(
       doc(db, 'storeSettings', 'trending'),
       (snap) => {
-        if (snap.exists() && Array.isArray(snap.data()?.productIds)) {
-          setTrendingProductIds(snap.data().productIds);
-        } else {
-          setTrendingProductIds(SAMPLE_PRODUCTS.filter((p) => p.isTrending).map((p) => p.id));
+        if (snap.exists()) {
+          setTrendingConfig({ ...DEFAULT_TRENDING_CONFIG, ...snap.data() } as TrendingConfig);
         }
       },
-      () => {
-        setTrendingProductIds(SAMPLE_PRODUCTS.filter((p) => p.isTrending).map((p) => p.id));
-      }
+      () => setTrendingConfig(DEFAULT_TRENDING_CONFIG)
+    );
+
+    // Reviews collection listener
+    const unsubReviews = onSnapshot(
+      collection(db, 'reviews'),
+      (snapshot) => {
+        const revList = snapshot.docs.map((d) => ({
+          id: d.id,
+          ...d.data(),
+        })) as Review[];
+        setReviews(revList);
+      },
+      (err) => console.warn('Reviews listener notice:', err.message)
+    );
+
+    // Restock Subscriptions listener
+    const unsubRestock = onSnapshot(
+      collection(db, 'restockSubscriptions'),
+      (snapshot) => {
+        const subList = snapshot.docs.map((d) => ({
+          id: d.id,
+          ...d.data(),
+        })) as RestockSubscription[];
+        setRestockSubscriptions(subList);
+      },
+      (err) => console.warn('Restock subscriptions listener notice:', err.message)
     );
 
     return () => {
@@ -242,7 +339,11 @@ export const StoreProvider: React.FC<{ children: React.ReactNode }> = ({ childre
       unsubBanners();
       unsubVouchers();
       unsubAnnouncement();
+      unsubWebsiteConfig();
+      unsubAiKnowledge();
       unsubTrending();
+      unsubReviews();
+      unsubRestock();
     };
   }, []);
 
@@ -365,37 +466,24 @@ export const StoreProvider: React.FC<{ children: React.ReactNode }> = ({ childre
   const seedInitialDataToFirestore = async () => {
     try {
       for (const prod of SAMPLE_PRODUCTS) {
-        await setDoc(doc(db, 'products', prod.id), prod);
+        await setDoc(doc(db, 'products', prod.id), sanitizeForFirestore(prod));
       }
       for (const cat of SAMPLE_CATEGORIES) {
-        await setDoc(doc(db, 'categories', cat.id), cat);
+        await setDoc(doc(db, 'categories', cat.id), sanitizeForFirestore(cat));
       }
       for (const ban of SAMPLE_BANNERS) {
-        await setDoc(doc(db, 'banners', ban.id), ban);
+        await setDoc(doc(db, 'banners', ban.id), sanitizeForFirestore(ban));
       }
       for (const v of SAMPLE_VOUCHERS) {
-        await setDoc(doc(db, 'vouchers', v.id), v);
+        await setDoc(doc(db, 'vouchers', v.id), sanitizeForFirestore(v));
       }
-      await setDoc(doc(db, 'storeSettings', 'announcement'), DEFAULT_ANNOUNCEMENT);
+      await setDoc(doc(db, 'storeSettings', 'announcement'), sanitizeForFirestore(DEFAULT_ANNOUNCEMENT));
+      await setDoc(doc(db, 'storeSettings', 'websiteConfig'), sanitizeForFirestore(DEFAULT_WEBSITE_CONFIG));
+      await setDoc(doc(db, 'storeSettings', 'aiKnowledge'), sanitizeForFirestore(DEFAULT_AI_KNOWLEDGE));
+      await setDoc(doc(db, 'storeSettings', 'trending'), sanitizeForFirestore(DEFAULT_TRENDING_CONFIG));
     } catch (error) {
       handleFirestoreError(error, OperationType.WRITE, 'products');
     }
-  };
-
-  // Helper to remove any undefined fields recursively for Firestore safety
-  const sanitizeForFirestore = <T,>(obj: T): T => {
-    if (obj === undefined) return null as unknown as T;
-    if (obj === null || typeof obj !== 'object') return obj;
-    if (Array.isArray(obj)) {
-      return obj.map((item) => sanitizeForFirestore(item)) as unknown as T;
-    }
-    const cleaned: Record<string, any> = {};
-    for (const [key, value] of Object.entries(obj as Record<string, any>)) {
-      if (value !== undefined) {
-        cleaned[key] = sanitizeForFirestore(value);
-      }
-    }
-    return cleaned as T;
   };
 
   // Helper to generate a random 16-digit card number and 4-digit PIN
@@ -444,7 +532,13 @@ export const StoreProvider: React.FC<{ children: React.ReactNode }> = ({ childre
       customerId: custId,
       orderStatus: hasGiftVoucher ? 'delivered' : 'ordered',
       isGiftVoucherOrder: hasGiftVoucher,
-      giftCardDetails: generatedCard || undefined,
+      giftCardDetails: generatedCard || null,
+      pricing: {
+        ...orderData.pricing,
+        voucherCode: orderData.pricing.voucherCode || null,
+        voucherDiscount: orderData.pricing.voucherDiscount || 0,
+        discount: orderData.pricing.discount || 0,
+      },
       estimatedDelivery: orderData.estimatedDelivery || deliveryDate8Days,
       createdAt: now,
       updatedAt: now,
@@ -463,28 +557,34 @@ export const StoreProvider: React.FC<{ children: React.ReactNode }> = ({ childre
     const fullOrder = sanitizeForFirestore(rawOrder);
 
     try {
-      await runTransaction(db, async (transaction) => {
-        for (const item of orderData.items) {
-          if (!item.isGiftVoucher) {
-            const productRef = doc(db, 'products', item.productId);
-            const productSnap = await transaction.get(productRef);
-            if (productSnap.exists()) {
-              const currentStock = productSnap.data().stock || 0;
-              const newStock = Math.max(0, currentStock - item.quantity);
-              transaction.update(productRef, { stock: newStock });
+      try {
+        await runTransaction(db, async (transaction) => {
+          const orderRef = doc(db, 'orders', orderId);
+          transaction.set(orderRef, fullOrder);
+
+          for (const item of orderData.items) {
+            if (!item.isGiftVoucher) {
+              const productRef = doc(db, 'products', item.productId);
+              const productSnap = await transaction.get(productRef);
+              if (productSnap.exists()) {
+                const currentStock = productSnap.data().stock || 0;
+                const newStock = Math.max(0, currentStock - item.quantity);
+                transaction.update(productRef, { stock: newStock });
+              }
             }
           }
-        }
-        const orderRef = doc(db, 'orders', orderId);
-        transaction.set(orderRef, fullOrder);
-      });
+        });
+      } catch (txErr) {
+        console.warn('Atomic inventory transaction notice, writing order direct:', txErr);
+        await setDoc(doc(db, 'orders', orderId), fullOrder);
+      }
 
       // Deduct wallet if used
       if (orderData.pricing.walletUsed > 0 && userProfile) {
         const newBalance = Math.max(0, userProfile.walletBalance - orderData.pricing.walletUsed);
         await updateProfile({ walletBalance: newBalance });
 
-        await addDoc(collection(db, 'walletLedger'), {
+        await addDoc(collection(db, 'walletLedger'), sanitizeForFirestore({
           id: `LED-${Date.now()}`,
           userId: currentUser.uid,
           amount: orderData.pricing.walletUsed,
@@ -492,11 +592,11 @@ export const StoreProvider: React.FC<{ children: React.ReactNode }> = ({ childre
           reason: `Debited for order #${orderId}`,
           orderId,
           createdAt: now,
-        });
+        }));
       }
 
       // Add Notification
-      await addDoc(collection(db, 'notifications'), {
+      await addDoc(collection(db, 'notifications'), sanitizeForFirestore({
         userId: currentUser.uid,
         title: hasGiftVoucher ? 'Digital Gift Card Delivered!' : 'Order Placed!',
         message: hasGiftVoucher
@@ -506,7 +606,7 @@ export const StoreProvider: React.FC<{ children: React.ReactNode }> = ({ childre
         link: `/orders/${orderId}`,
         isRead: false,
         createdAt: now,
-      });
+      }));
 
       return orderId;
     } catch (error) {
@@ -537,14 +637,14 @@ export const StoreProvider: React.FC<{ children: React.ReactNode }> = ({ childre
           ]
         : [{ status, timestamp: now, note: note || '' }];
 
-      await updateDoc(orderRef, {
+      await updateDoc(orderRef, sanitizeForFirestore({
         orderStatus: status,
         updatedAt: now,
         timeline: newTimeline,
-      });
+      }));
 
       if (existing) {
-        await addDoc(collection(db, 'notifications'), {
+        await addDoc(collection(db, 'notifications'), sanitizeForFirestore({
           userId: existing.userId,
           title: `Order Status: ${status.toUpperCase()}`,
           message: `Your order #${orderId} is now ${status}. ${note || ''}`,
@@ -552,7 +652,7 @@ export const StoreProvider: React.FC<{ children: React.ReactNode }> = ({ childre
           link: `/orders/${orderId}`,
           isRead: false,
           createdAt: now,
-        });
+        }));
       }
     } catch (error) {
       handleFirestoreError(error, OperationType.UPDATE, `orders/${orderId}`);
@@ -572,7 +672,7 @@ export const StoreProvider: React.FC<{ children: React.ReactNode }> = ({ childre
 
     try {
       const orderRef = doc(db, 'orders', orderId);
-      await updateDoc(orderRef, {
+      await updateDoc(orderRef, sanitizeForFirestore({
         cancelRequest: {
           status: 'pending',
           reason,
@@ -587,10 +687,10 @@ export const StoreProvider: React.FC<{ children: React.ReactNode }> = ({ childre
           },
         ],
         updatedAt: now,
-      });
+      }));
 
       // Notify customer
-      await addDoc(collection(db, 'notifications'), {
+      await addDoc(collection(db, 'notifications'), sanitizeForFirestore({
         userId: existing.userId,
         title: 'Cancellation Request Submitted',
         message: `Your cancellation request for order #${orderId} is pending store review.`,
@@ -598,7 +698,7 @@ export const StoreProvider: React.FC<{ children: React.ReactNode }> = ({ childre
         link: `/orders/${orderId}`,
         isRead: false,
         createdAt: now,
-      });
+      }));
     } catch (error) {
       handleFirestoreError(error, OperationType.UPDATE, `orders/${orderId}`);
     }
@@ -616,7 +716,7 @@ export const StoreProvider: React.FC<{ children: React.ReactNode }> = ({ childre
 
     try {
       const orderRef = doc(db, 'orders', orderId);
-      await updateDoc(orderRef, {
+      await updateDoc(orderRef, sanitizeForFirestore({
         returnRequest: {
           status: 'pending',
           reason,
@@ -632,9 +732,9 @@ export const StoreProvider: React.FC<{ children: React.ReactNode }> = ({ childre
           },
         ],
         updatedAt: now,
-      });
+      }));
 
-      await addDoc(collection(db, 'notifications'), {
+      await addDoc(collection(db, 'notifications'), sanitizeForFirestore({
         userId: existing.userId,
         title: 'Return Request Received',
         message: `Return request for order #${orderId} is being evaluated by customer support.`,
@@ -642,7 +742,7 @@ export const StoreProvider: React.FC<{ children: React.ReactNode }> = ({ childre
         link: `/orders/${orderId}`,
         isRead: false,
         createdAt: now,
-      });
+      }));
     } catch (error) {
       handleFirestoreError(error, OperationType.UPDATE, `orders/${orderId}`);
     }
@@ -919,17 +1019,17 @@ export const StoreProvider: React.FC<{ children: React.ReactNode }> = ({ childre
     try {
       // Mark card as redeemed in Firestore
       const orderRef = doc(db, 'orders', orderDocId);
-      await updateDoc(orderRef, {
+      await updateDoc(orderRef, sanitizeForFirestore({
         'giftCardDetails.isRedeemed': true,
         'giftCardDetails.redeemedAt': now,
-      });
+      }));
 
       // Credit wallet
       const newBalance = (userProfile.walletBalance || 0) + card.amount;
       await updateProfile({ walletBalance: newBalance });
 
       // Add ledger transaction
-      await addDoc(collection(db, 'walletLedger'), {
+      await addDoc(collection(db, 'walletLedger'), sanitizeForFirestore({
         id: `LED-${Date.now()}`,
         userId: currentUser.uid,
         amount: card.amount,
@@ -937,7 +1037,7 @@ export const StoreProvider: React.FC<{ children: React.ReactNode }> = ({ childre
         reason: `Gift Card Redeemed (${cleanCard})`,
         giftCardNumber: cleanCard,
         createdAt: now,
-      });
+      }));
 
       return {
         success: true,
@@ -950,24 +1050,67 @@ export const StoreProvider: React.FC<{ children: React.ReactNode }> = ({ childre
     }
   };
 
-  // Voucher discount
+  // Voucher validation and application
   const applyVoucher = (
     code: string,
-    subtotal: number
+    subtotal: number,
+    productIds: string[] = [],
+    categoryIds: string[] = []
   ): { valid: boolean; discount: number; message: string; voucher?: Voucher } => {
     const clean = code.trim().toUpperCase();
-    const found = vouchers.find((v) => v.code.toUpperCase() === clean && v.isActive);
+    const found = vouchers.find((v) => v.code.toUpperCase() === clean);
 
-    if (!found) {
-      return { valid: false, discount: 0, message: 'Invalid or expired coupon code' };
+    if (!found || !found.isActive) {
+      return { valid: false, discount: 0, message: `Coupon code '${clean}' is invalid or inactive.` };
     }
 
-    if (subtotal < found.minOrderValue) {
+    // Expiry check
+    if (found.expiryDate) {
+      const expiry = new Date(found.expiryDate);
+      expiry.setHours(23, 59, 59, 999);
+      if (new Date() > expiry) {
+        return { valid: false, discount: 0, message: `Coupon code '${clean}' expired on ${found.expiryDate}.` };
+      }
+    }
+
+    // Start date check
+    if (found.startDate) {
+      const start = new Date(found.startDate);
+      if (new Date() < start) {
+        return { valid: false, discount: 0, message: `Coupon '${clean}' will become active on ${found.startDate}.` };
+      }
+    }
+
+    // Min Order Value
+    if (subtotal < (found.minOrderValue || 0)) {
       return {
         valid: false,
         discount: 0,
-        message: `Coupon requires a minimum cart value of ₹${found.minOrderValue.toLocaleString()}`,
+        message: `Minimum order value of ₹${(found.minOrderValue || 0).toLocaleString()} required for '${clean}'.`,
       };
+    }
+
+    // Usage limit
+    if (typeof found.usageLimit === 'number' && found.usageLimit > 0) {
+      if ((found.usedCount || 0) >= found.usageLimit) {
+        return { valid: false, discount: 0, message: `Coupon '${clean}' has reached maximum total usage.` };
+      }
+    }
+
+    // Category restriction check
+    if (Array.isArray(found.restrictedCategoryIds) && found.restrictedCategoryIds.length > 0) {
+      const matchesCategory = categoryIds.some((cId) => found.restrictedCategoryIds?.includes(cId));
+      if (!matchesCategory && categoryIds.length > 0) {
+        return { valid: false, discount: 0, message: `Coupon '${clean}' is only valid on selected categories.` };
+      }
+    }
+
+    // Product restriction check
+    if (Array.isArray(found.restrictedProductIds) && found.restrictedProductIds.length > 0) {
+      const matchesProduct = productIds.some((pId) => found.restrictedProductIds?.includes(pId));
+      if (!matchesProduct && productIds.length > 0) {
+        return { valid: false, discount: 0, message: `Coupon '${clean}' is valid only for designated promotional items.` };
+      }
     }
 
     let discount = 0;
@@ -980,30 +1123,48 @@ export const StoreProvider: React.FC<{ children: React.ReactNode }> = ({ childre
       }
     }
 
+    discount = Math.min(discount, subtotal);
+
     return {
       valid: true,
       discount,
-      message: `Coupon ${found.code} applied! Saved ₹${discount}`,
+      message: `🎉 Coupon ${found.code} applied! Saved ₹${discount.toLocaleString()}`,
       voucher: found,
     };
+  };
+
+  // Coupon CRUD
+  const addVoucher = async (voucherData: Omit<Voucher, 'id' | 'usedCount'>): Promise<string> => {
+    const id = `vouch-${voucherData.code.toLowerCase().replace(/[^a-z0-9]+/g, '-')}-${Date.now().toString().slice(-4)}`;
+    const newVoucher: Voucher = {
+      ...voucherData,
+      id,
+      code: voucherData.code.toUpperCase().trim(),
+      usedCount: 0,
+    };
+    await setDoc(doc(db, 'vouchers', id), sanitizeForFirestore(newVoucher));
+    return id;
+  };
+
+  const updateVoucher = async (id: string, updates: Partial<Voucher>) => {
+    const cleanUpdates = { ...updates };
+    if (cleanUpdates.code) {
+      cleanUpdates.code = cleanUpdates.code.toUpperCase().trim();
+    }
+    await updateDoc(doc(db, 'vouchers', id), sanitizeForFirestore(cleanUpdates));
+  };
+
+  const deleteVoucher = async (id: string) => {
+    await deleteDoc(doc(db, 'vouchers', id));
   };
 
   // Product CRUD
   const addProduct = async (productData: Omit<Product, 'id' | 'createdAt'>): Promise<string> => {
     const id = `tp-prod-${Date.now()}`;
-    // Ensure consistent categoryIds array along with primary category
-    const catList = productData.categoryIds && productData.categoryIds.length > 0
-      ? productData.categoryIds
-      : productData.categories && productData.categories.length > 0
-      ? productData.categories
-      : [productData.category || 'electronics'];
-
     const newProduct: Product = {
       ...productData,
       id,
-      category: productData.category || catList[0],
-      categories: catList,
-      categoryIds: catList,
+      categoryIds: productData.categoryIds || (productData.category ? [productData.category] : []),
       createdAt: new Date().toISOString(),
     };
     await setDoc(doc(db, 'products', id), sanitizeForFirestore(newProduct));
@@ -1011,150 +1172,21 @@ export const StoreProvider: React.FC<{ children: React.ReactNode }> = ({ childre
   };
 
   const updateProduct = async (id: string, updates: Partial<Product>) => {
-    const existing = products.find((p) => p.id === id);
-    const wasOutOfStock = existing ? existing.stock <= 0 : false;
-    const isNowInStock = updates.stock !== undefined && updates.stock > 0;
-
-    // Maintain categoryIds consistency
-    let categoryUpdates = {};
-    if (updates.categoryIds || updates.categories || updates.category) {
-      const catList = updates.categoryIds && updates.categoryIds.length > 0
-        ? updates.categoryIds
-        : updates.categories && updates.categories.length > 0
-        ? updates.categories
-        : updates.category
-        ? [updates.category]
-        : existing?.categoryIds || [existing?.category || 'electronics'];
-      categoryUpdates = {
-        category: updates.category || catList[0],
-        categories: catList,
-        categoryIds: catList,
-      };
-    }
-
+    const prevProd = products.find((p) => p.id === id);
     const sanitized = sanitizeForFirestore({
       ...updates,
-      ...categoryUpdates,
       updatedAt: new Date().toISOString(),
     });
     await updateDoc(doc(db, 'products', id), sanitized);
 
-    // Restock notification trigger: if stock updated from 0 to > 0
-    if (wasOutOfStock && isNowInStock) {
-      try {
-        const qSubs = query(
-          collection(db, 'restockSubscriptions'),
-          where('productId', '==', id),
-          where('resolved', '==', false)
-        );
-        const subSnap = await getDocs(qSubs);
-        const now = new Date().toISOString();
-        const prodName = updates.name || existing?.name || 'Product';
-        const prodSlug = updates.slug || existing?.slug || id;
-
-        for (const subDoc of subSnap.docs) {
-          const sub = subDoc.data() as any;
-          // Create in-app notification
-          await addDoc(
-            collection(db, 'notifications'),
-            sanitizeForFirestore({
-              userId: sub.customerUid,
-              title: 'Item Back in Stock! 🎉',
-              message: `Great news! "${prodName}" is back in stock with ${updates.stock} units available. Order now before stock runs out!`,
-              type: 'order',
-              link: `/product/${prodSlug}`,
-              isRead: false,
-              createdAt: now,
-            })
-          );
-
-          // Mark subscription resolved
-          await updateDoc(doc(db, 'restockSubscriptions', subDoc.id), {
-            resolved: true,
-            notifiedAt: now,
-          });
-
-          // Browser notification if user is on this machine and permitted
-          if (
-            currentUser &&
-            currentUser.uid === sub.customerUid &&
-            typeof window !== 'undefined' &&
-            'Notification' in window &&
-            Notification.permission === 'granted'
-          ) {
-            try {
-              new Notification('TrendPro — Back in Stock!', {
-                body: `"${prodName}" is now available to order!`,
-                icon: updates.mainImage || existing?.mainImage || '/favicon.ico',
-              });
-            } catch {}
-          }
-        }
-      } catch (restockErr) {
-        console.warn('Restock notification processing notice:', restockErr);
-      }
+    // If stock transitioned from 0 to >0, trigger restock subscriber notifications
+    if (typeof updates.stock === 'number' && (prevProd?.stock || 0) <= 0 && updates.stock > 0) {
+      await notifyRestockSubscribers(id, updates.stock, prevProd?.name || 'Product', prevProd?.slug || id);
     }
   };
 
   const deleteProduct = async (id: string) => {
     await deleteDoc(doc(db, 'products', id));
-    // If it was in trending list, remove it
-    if (trendingProductIds.includes(id)) {
-      const remainingTrending = trendingProductIds.filter((tid) => tid !== id);
-      await updateTrendingProducts(remainingTrending);
-    }
-  };
-
-  // Trending Products Management
-  const updateTrendingProducts = async (productIds: string[]) => {
-    const now = new Date().toISOString();
-    await setDoc(doc(db, 'storeSettings', 'trending'), {
-      productIds,
-      updatedAt: now,
-    });
-    setTrendingProductIds(productIds);
-
-    // Keep product isTrending flag synchronized
-    for (const prod of products) {
-      const isTrendingNow = productIds.includes(prod.id);
-      if (Boolean(prod.isTrending) !== isTrendingNow) {
-        await updateDoc(doc(db, 'products', prod.id), { isTrending: isTrendingNow });
-      }
-    }
-  };
-
-  // Restock Subscriptions
-  const subscribeToRestock = async (productId: string, productName: string, variantId?: string) => {
-    if (!currentUser) throw new Error('Please sign in with Google to subscribe for restock notifications');
-    const subId = `sub_${currentUser.uid}_${productId}`;
-    const newSub = {
-      id: subId,
-      customerUid: currentUser.uid,
-      customerEmail: currentUser.email || '',
-      productId,
-      productName,
-      variantId: variantId || null,
-      createdAt: new Date().toISOString(),
-      resolved: false,
-    };
-    await setDoc(doc(db, 'restockSubscriptions', subId), sanitizeForFirestore(newSub));
-  };
-
-  const unsubscribeFromRestock = async (productId: string) => {
-    if (!currentUser) return;
-    const subId = `sub_${currentUser.uid}_${productId}`;
-    await deleteDoc(doc(db, 'restockSubscriptions', subId));
-  };
-
-  const isSubscribedToRestock = async (productId: string): Promise<boolean> => {
-    if (!currentUser) return false;
-    try {
-      const subId = `sub_${currentUser.uid}_${productId}`;
-      const snap = await getDoc(doc(db, 'restockSubscriptions', subId));
-      return snap.exists() && !snap.data().resolved;
-    } catch {
-      return false;
-    }
   };
 
   // Category CRUD
@@ -1191,90 +1223,459 @@ export const StoreProvider: React.FC<{ children: React.ReactNode }> = ({ childre
     await deleteDoc(doc(db, 'banners', id));
   };
 
-  // Real Reviews with Accurate Rating Calculation
+  // Recalculate real ratings from published review records
+  const recalculateProductRating = async (productId: string) => {
+    try {
+      const q = query(collection(db, 'reviews'), where('productId', '==', productId));
+      const snap = await getDocs(q);
+      const activeReviews = snap.docs
+        .map((d) => d.data() as Review)
+        .filter((r) => !r.isHidden && typeof r.rating === 'number' && r.rating >= 1 && r.rating <= 5);
+
+      const count = activeReviews.length;
+      const average = count > 0
+        ? Number((activeReviews.reduce((acc, r) => acc + r.rating, 0) / count).toFixed(1))
+        : 0;
+
+      await updateDoc(doc(db, 'products', productId), sanitizeForFirestore({
+        rating: average,
+        ratingCount: count,
+        updatedAt: new Date().toISOString(),
+      }));
+    } catch (err) {
+      console.warn('Rating recalculation notice:', err);
+    }
+  };
+
+  // Reviews CRUD with authentic rating updates
   const addReview = async (
     productId: string,
     rating: number,
     title?: string,
     comment?: string,
-    images?: string[]
-  ) => {
-    if (!currentUser) throw new Error('Must be logged in to submit a review');
-    const cleanRating = Math.max(1, Math.min(5, Number(rating) || 5));
-
-    // Check if user already reviewed this product to avoid duplicate entries
-    const qUserRev = query(
-      collection(db, 'reviews'),
-      where('productId', '==', productId),
-      where('userId', '==', currentUser.uid)
-    );
-    const existingRevSnap = await getDocs(qUserRev);
+    images?: string[],
+    reviewerName?: string,
+    isOwnerSeeded: boolean = false
+  ): Promise<string> => {
+    if (!currentUser && !isOwnerSeeded) throw new Error('Must be logged in to submit a review');
+    const reviewId = `rev-${Date.now()}-${Math.floor(100 + Math.random() * 900)}`;
     const now = new Date().toISOString();
-
-    const reviewId = existingRevSnap.empty ? `rev-${Date.now()}` : existingRevSnap.docs[0].id;
     const rawReview: Review = {
       id: reviewId,
       productId,
-      userId: currentUser.uid,
-      userName: currentUser.displayName || 'Verified Buyer',
-      userPhoto: currentUser.photoURL || undefined,
-      rating: cleanRating,
+      userId: currentUser?.uid || 'store-owner',
+      userName: reviewerName || currentUser?.displayName || 'Verified Buyer',
+      userPhoto: currentUser?.photoURL || undefined,
+      rating: Math.max(1, Math.min(5, Number(rating) || 5)),
       title: title || 'Customer Review',
       comment: comment || '',
       images: images || [],
-      isVerifiedPurchase: true,
+      isVerifiedPurchase: !isOwnerSeeded,
+      isOwnerSeeded,
+      isHidden: false,
       createdAt: now,
+      updatedAt: now,
     };
     await setDoc(doc(db, 'reviews', reviewId), sanitizeForFirestore(rawReview));
-
-    // Calculate real average and review count from all valid reviews
-    const allProdRevsSnap = await getDocs(
-      query(collection(db, 'reviews'), where('productId', '==', productId))
-    );
-    const validReviews = allProdRevsSnap.docs
-      .map((d) => d.data() as Review)
-      .filter((r) => typeof r.rating === 'number' && r.rating >= 1 && r.rating <= 5);
-
-    const newCount = validReviews.length;
-    const newRating = newCount > 0
-      ? Number((validReviews.reduce((sum, r) => sum + r.rating, 0) / newCount).toFixed(1))
-      : 0;
-
-    await updateProduct(productId, { rating: newRating, ratingCount: newCount });
+    await recalculateProductRating(productId);
+    return reviewId;
   };
 
-  const deleteReview = async (reviewId: string, productId: string) => {
-    await deleteDoc(doc(db, 'reviews', reviewId));
+  const addBulkReviews = async (
+    bulkList: Array<{
+      productId: string;
+      rating: number;
+      title?: string;
+      comment: string;
+      reviewerName: string;
+      isVerifiedPurchase?: boolean;
+      isOwnerSeeded?: boolean;
+    }>
+  ): Promise<{ succeeded: number; failed: number }> => {
+    let succeeded = 0;
+    let failed = 0;
+    const affectedProducts = new Set<string>();
 
-    const allProdRevsSnap = await getDocs(
-      query(collection(db, 'reviews'), where('productId', '==', productId))
-    );
-    const validReviews = allProdRevsSnap.docs
-      .map((d) => d.data() as Review)
-      .filter((r) => r.id !== reviewId && typeof r.rating === 'number' && r.rating >= 1 && r.rating <= 5);
+    for (const r of bulkList) {
+      try {
+        if (!r.productId || !r.comment) {
+          failed++;
+          continue;
+        }
+        const revId = `rev-${Date.now()}-${Math.floor(100 + Math.random() * 900)}-${succeeded}`;
+        const now = new Date().toISOString();
+        const docData: Review = {
+          id: revId,
+          productId: r.productId,
+          userId: currentUser?.uid || 'store-owner',
+          userName: r.reviewerName || 'Customer',
+          rating: Math.max(1, Math.min(5, Number(r.rating) || 5)),
+          title: r.title || 'Product Feedback',
+          comment: r.comment,
+          images: [],
+          isVerifiedPurchase: Boolean(r.isVerifiedPurchase),
+          isOwnerSeeded: r.isOwnerSeeded !== undefined ? r.isOwnerSeeded : true,
+          isHidden: false,
+          createdAt: now,
+          updatedAt: now,
+        };
+        await setDoc(doc(db, 'reviews', revId), sanitizeForFirestore(docData));
+        affectedProducts.add(r.productId);
+        succeeded++;
+      } catch (e) {
+        console.warn('Bulk review write error:', e);
+        failed++;
+      }
+    }
 
-    const newCount = validReviews.length;
-    const newRating = newCount > 0
-      ? Number((validReviews.reduce((sum, r) => sum + r.rating, 0) / newCount).toFixed(1))
-      : 0;
+    for (const prodId of affectedProducts) {
+      await recalculateProductRating(prodId);
+    }
 
-    await updateProduct(productId, { rating: newRating, ratingCount: newCount });
+    return { succeeded, failed };
+  };
+
+  const updateReview = async (id: string, updates: Partial<Review>) => {
+    const existing = reviews.find((r) => r.id === id);
+    await updateDoc(doc(db, 'reviews', id), sanitizeForFirestore({
+      ...updates,
+      updatedAt: new Date().toISOString(),
+    }));
+    if (existing?.productId) {
+      await recalculateProductRating(existing.productId);
+    }
+  };
+
+  const deleteReview = async (id: string) => {
+    const existing = reviews.find((r) => r.id === id);
+    await deleteDoc(doc(db, 'reviews', id));
+    if (existing?.productId) {
+      await recalculateProductRating(existing.productId);
+    }
   };
 
   const getProductReviews = async (productId: string): Promise<Review[]> => {
     try {
       const q = query(collection(db, 'reviews'), where('productId', '==', productId));
       const snap = await getDocs(q);
-      if (snap.empty) {
-        return [];
-      }
-      return snap.docs
+      const res = snap.docs
         .map((d) => ({ id: d.id, ...d.data() } as Review))
-        .filter((r) => typeof r.rating === 'number' && r.rating >= 1 && r.rating <= 5)
-        .sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime());
+        .filter((r) => !r.isHidden);
+      return res.sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime());
     } catch {
       return [];
     }
+  };
+
+  // Restock notification helpers
+  const notifyRestockSubscribers = async (productId: string, newStock: number, prodTitle: string, prodSlug: string) => {
+    try {
+      const qSub = query(
+        collection(db, 'restockSubscriptions'),
+        where('productId', '==', productId),
+        where('status', '==', 'pending')
+      );
+      const subSnap = await getDocs(qSub);
+      if (!subSnap.empty) {
+        const now = new Date().toISOString();
+        for (const subDoc of subSnap.docs) {
+          const sub = subDoc.data() as RestockSubscription;
+          await addDoc(collection(db, 'notifications'), sanitizeForFirestore({
+            userId: sub.userId,
+            title: `🎉 Back in Stock: ${prodTitle}`,
+            message: `"${prodTitle}" is now back in stock with ${newStock} units available! Grab yours before it runs out.`,
+            type: 'system',
+            link: `/product/${prodSlug}`,
+            isRead: false,
+            createdAt: now,
+          }));
+
+          await updateDoc(doc(db, 'restockSubscriptions', subDoc.id), {
+            status: 'notified',
+            notifiedAt: now,
+          });
+        }
+      }
+    } catch (err) {
+      console.warn('Restock notifications processing notice:', err);
+    }
+  };
+
+  const updateProductStockAndNotify = async (productId: string, newStock: number) => {
+    const prod = products.find((p) => p.id === productId);
+    await updateProduct(productId, { stock: newStock });
+  };
+
+  const subscribeRestock = async (productId: string, variant?: string): Promise<{ success: boolean; message: string; subId?: string }> => {
+    if (!currentUser) {
+      return { success: false, message: 'Please sign in to subscribe to restock alerts.' };
+    }
+    const cleanVariant = variant || '';
+    const existingSub = restockSubscriptions.find(
+      (s) => s.userId === currentUser.uid && s.productId === productId && (s.variant || '') === cleanVariant && s.status === 'pending'
+    );
+    if (existingSub) {
+      return { success: true, message: 'You are already subscribed to restock notifications for this item.', subId: existingSub.id };
+    }
+
+    const subId = `sub-${currentUser.uid.slice(-6)}-${Date.now()}`;
+    const prod = products.find((p) => p.id === productId);
+    const newSub: RestockSubscription = {
+      id: subId,
+      userId: currentUser.uid,
+      customerEmail: currentUser.email || '',
+      customerName: currentUser.displayName || undefined,
+      productId,
+      productName: prod?.name || 'Product',
+      variant: cleanVariant || undefined,
+      createdAt: new Date().toISOString(),
+      status: 'pending',
+    };
+
+    try {
+      await setDoc(doc(db, 'restockSubscriptions', subId), sanitizeForFirestore(newSub));
+      return { success: true, message: 'Subscribed! We will notify you immediately when this item is restocked.', subId };
+    } catch (error) {
+      handleFirestoreError(error, OperationType.WRITE, `restockSubscriptions/${subId}`);
+      return { success: false, message: 'Failed to subscribe. Please try again.' };
+    }
+  };
+
+  const cancelRestockSubscription = async (subscriptionId: string) => {
+    try {
+      await deleteDoc(doc(db, 'restockSubscriptions', subscriptionId));
+    } catch (error) {
+      handleFirestoreError(error, OperationType.DELETE, `restockSubscriptions/${subscriptionId}`);
+    }
+  };
+
+  const isUserRestockSubscribed = (productId: string, variant?: string): boolean => {
+    if (!currentUser) return false;
+    const cleanVariant = variant || '';
+    return restockSubscriptions.some(
+      (s) => s.userId === currentUser.uid && s.productId === productId && (s.variant || '') === cleanVariant && s.status === 'pending'
+    );
+  };
+
+  const getUserRestockSubscription = (productId: string, variant?: string): RestockSubscription | undefined => {
+    if (!currentUser) return undefined;
+    const cleanVariant = variant || '';
+    return restockSubscriptions.find(
+      (s) => s.userId === currentUser.uid && s.productId === productId && (s.variant || '') === cleanVariant && s.status === 'pending'
+    );
+  };
+
+  // Trending Products Management
+  const updateTrendingProducts = async (items: { productId: string; priority: number }[]) => {
+    const now = new Date().toISOString();
+    const pIds = items.map((i) => i.productId);
+    const trendingDoc: TrendingConfig = {
+      productIds: pIds,
+      items,
+      updatedAt: now,
+    };
+    await setDoc(doc(db, 'storeSettings', 'trending'), sanitizeForFirestore(trendingDoc));
+    setTrendingConfig(trendingDoc);
+
+    // Sync product flags in Firestore
+    for (const prod of products) {
+      const item = items.find((t) => t.productId === prod.id);
+      const isTrend = Boolean(item);
+      const order = item ? item.priority : 999;
+      if (prod.isTrending !== isTrend || prod.trendingOrder !== order) {
+        await updateDoc(doc(db, 'products', prod.id), sanitizeForFirestore({
+          isTrending: isTrend,
+          trendingOrder: order,
+          updatedAt: now,
+        }));
+      }
+    }
+  };
+
+  // Website Config & AI Knowledge updates
+  const updateWebsiteConfig = async (config: WebsiteConfig) => {
+    await setDoc(doc(db, 'storeSettings', 'websiteConfig'), sanitizeForFirestore(config));
+    setWebsiteConfig(config);
+  };
+
+  const updateAIKnowledge = async (config: AIKnowledgeConfig) => {
+    await setDoc(doc(db, 'storeSettings', 'aiKnowledge'), sanitizeForFirestore(config));
+    setAiKnowledgeConfig(config);
+  };
+
+  // MASTER SET — CONFIRM ALL CHANGES (Owner Control Centre)
+  const saveMasterSet = async (payload: {
+    websiteConfig?: WebsiteConfig;
+    aiKnowledge?: AIKnowledgeConfig;
+    announcement?: StoreAnnouncementConfig;
+    companyConfig?: StoreConfig;
+    trendingItems?: { productId: string; priority: number }[];
+    banners?: Banner[];
+    vouchers?: Voucher[];
+    categories?: Category[];
+    products?: Product[];
+  }): Promise<{ success: boolean; revision: number; savedSections: string[]; errors?: string[] }> => {
+    if (!isAdmin) throw new Error('Unauthorized: Only store owner can execute Master Set');
+    const now = new Date().toISOString();
+    const newRev = (websiteConfig.revision || 1) + 1;
+    const savedSections: string[] = [];
+    const errors: string[] = [];
+
+    // 1. Website Config
+    if (payload.websiteConfig) {
+      try {
+        const updated = {
+          ...payload.websiteConfig,
+          revision: newRev,
+          updatedAt: now,
+        };
+        await setDoc(doc(db, 'storeSettings', 'websiteConfig'), sanitizeForFirestore(updated));
+        setWebsiteConfig(updated);
+        savedSections.push('Homepage Layout, Theme & Policies');
+      } catch (e: any) {
+        errors.push(`Website Config: ${e.message}`);
+      }
+    }
+
+    // 2. AI Knowledge
+    if (payload.aiKnowledge) {
+      try {
+        const updated = {
+          ...payload.aiKnowledge,
+          revision: newRev,
+          updatedAt: now,
+        };
+        await setDoc(doc(db, 'storeSettings', 'aiKnowledge'), sanitizeForFirestore(updated));
+        setAiKnowledgeConfig(updated);
+        savedSections.push('AI Assistant Knowledge & Voice Preferences');
+      } catch (e: any) {
+        errors.push(`AI Knowledge: ${e.message}`);
+      }
+    }
+
+    // 3. Announcement
+    if (payload.announcement) {
+      try {
+        await setDoc(doc(db, 'storeSettings', 'announcement'), sanitizeForFirestore(payload.announcement));
+        setAnnouncementConfig(payload.announcement);
+        savedSections.push('Announcement Bar');
+      } catch (e: any) {
+        errors.push(`Announcement: ${e.message}`);
+      }
+    }
+
+    // 4. Company Config
+    if (payload.companyConfig) {
+      try {
+        await setDoc(doc(db, 'storeSettings', 'companyConfig'), sanitizeForFirestore(payload.companyConfig));
+        setStoreConfig(payload.companyConfig);
+        savedSections.push('Store & Dispatch Details');
+      } catch (e: any) {
+        errors.push(`Company Details: ${e.message}`);
+      }
+    }
+
+    // 5. Trending Products
+    if (payload.trendingItems) {
+      try {
+        const pIds = payload.trendingItems.map((t) => t.productId);
+        const trendingDoc: TrendingConfig = {
+          productIds: pIds,
+          items: payload.trendingItems,
+          updatedAt: now,
+        };
+        await setDoc(doc(db, 'storeSettings', 'trending'), sanitizeForFirestore(trendingDoc));
+        setTrendingConfig(trendingDoc);
+
+        // Sync flags on products in Firestore
+        for (const prod of products) {
+          const trendingItem = payload.trendingItems.find((t) => t.productId === prod.id);
+          const shouldBeTrending = Boolean(trendingItem);
+          const orderNum = trendingItem ? trendingItem.priority : 999;
+          if (prod.isTrending !== shouldBeTrending || prod.trendingOrder !== orderNum) {
+            await updateDoc(doc(db, 'products', prod.id), sanitizeForFirestore({
+              isTrending: shouldBeTrending,
+              trendingOrder: orderNum,
+              updatedAt: now,
+            }));
+          }
+        }
+        savedSections.push('Owner-Curated Trending Products');
+      } catch (e: any) {
+        errors.push(`Trending Products: ${e.message}`);
+      }
+    }
+
+    // 6. Banners
+    if (payload.banners) {
+      try {
+        for (const b of payload.banners) {
+          await setDoc(doc(db, 'banners', b.id), sanitizeForFirestore(b));
+        }
+        savedSections.push(`Promotional Banners (${payload.banners.length})`);
+      } catch (e: any) {
+        errors.push(`Banners: ${e.message}`);
+      }
+    }
+
+    // 7. Coupons
+    if (payload.vouchers) {
+      try {
+        for (const v of payload.vouchers) {
+          await setDoc(doc(db, 'vouchers', v.id), sanitizeForFirestore(v));
+        }
+        savedSections.push(`Active Coupons (${payload.vouchers.length})`);
+      } catch (e: any) {
+        errors.push(`Coupons: ${e.message}`);
+      }
+    }
+
+    // 8. Categories
+    if (payload.categories) {
+      try {
+        for (const c of payload.categories) {
+          await setDoc(doc(db, 'categories', c.id), sanitizeForFirestore(c));
+        }
+        savedSections.push(`Catalog Categories (${payload.categories.length})`);
+      } catch (e: any) {
+        errors.push(`Categories: ${e.message}`);
+      }
+    }
+
+    // 9. Products
+    if (payload.products) {
+      try {
+        for (const p of payload.products) {
+          await setDoc(doc(db, 'products', p.id), sanitizeForFirestore(p));
+        }
+        savedSections.push(`Catalog Products (${payload.products.length})`);
+      } catch (e: any) {
+        errors.push(`Products: ${e.message}`);
+      }
+    }
+
+    // Save revision snapshot for audit & backup
+    try {
+      await setDoc(
+        doc(db, 'storeSettings', 'revisions', 'history', `rev-${newRev}-${Date.now()}`),
+        sanitizeForFirestore({
+          revision: newRev,
+          savedBy: currentUser?.email,
+          timestamp: now,
+          savedSections,
+          errors: errors.length > 0 ? errors : null,
+        })
+      );
+    } catch {
+      // Non-blocking history record
+    }
+
+    return {
+      success: errors.length === 0,
+      revision: newRev,
+      savedSections,
+      errors: errors.length > 0 ? errors : undefined,
+    };
   };
 
   // Support messages (CUSTOMER TO OWNER - NO BOTS)
@@ -1543,17 +1944,17 @@ export const StoreProvider: React.FC<{ children: React.ReactNode }> = ({ childre
     await updateDoc(userDocRef, { walletBalance: newBal });
 
     // Ledger
-    await addDoc(collection(db, 'walletLedger'), {
+    await addDoc(collection(db, 'walletLedger'), sanitizeForFirestore({
       id: `LED-${Date.now()}`,
       userId: targetUserId,
       amount,
       type: 'credit',
       reason: `Owner Chat Credit: ${reason}`,
       createdAt: now,
-    });
+    }));
 
     // Notify customer
-    await addDoc(collection(db, 'notifications'), {
+    await addDoc(collection(db, 'notifications'), sanitizeForFirestore({
       userId: targetUserId,
       title: 'Wallet Balance Credited by Owner!',
       message: `₹${amount.toLocaleString()} has been added to your TrendPro wallet. Reason: ${reason}`,
@@ -1561,11 +1962,11 @@ export const StoreProvider: React.FC<{ children: React.ReactNode }> = ({ childre
       link: '/wallet',
       isRead: false,
       createdAt: now,
-    });
+    }));
 
     // Send chat system message
     const custId = `CUST-${targetUserId.slice(-6).toUpperCase()}`;
-    await addDoc(collection(db, 'supportMessages'), {
+    await addDoc(collection(db, 'supportMessages'), sanitizeForFirestore({
       userId: targetUserId,
       customerId: custId,
       userName: 'TrendPro Store Owner',
@@ -1575,7 +1976,7 @@ export const StoreProvider: React.FC<{ children: React.ReactNode }> = ({ childre
       walletCredited: amount,
       createdAt: now,
       isRead: false,
-    });
+    }));
   };
 
   const markNotificationAsRead = async (id: string) => {
@@ -1594,19 +1995,19 @@ export const StoreProvider: React.FC<{ children: React.ReactNode }> = ({ childre
     if (!currentUser || !userProfile) return;
     const newBal = (userProfile.walletBalance || 0) + amount;
     await updateProfile({ walletBalance: newBal });
-    await addDoc(collection(db, 'walletLedger'), {
+    await addDoc(collection(db, 'walletLedger'), sanitizeForFirestore({
       id: `LED-${Date.now()}`,
       userId: currentUser.uid,
       amount,
       type: 'credit',
       reason: 'Wallet Top-up via UPI / Netbanking',
       createdAt: new Date().toISOString(),
-    });
+    }));
   };
 
   // Owner update announcement bar (text, coupon, hide/show)
   const updateAnnouncementConfig = async (config: StoreAnnouncementConfig) => {
-    await setDoc(doc(db, 'storeSettings', 'announcement'), config);
+    await setDoc(doc(db, 'storeSettings', 'announcement'), sanitizeForFirestore(config));
     setAnnouncementConfig(config);
   };
 
@@ -1623,7 +2024,11 @@ export const StoreProvider: React.FC<{ children: React.ReactNode }> = ({ childre
         chats,
         announcementConfig,
         storeConfig,
-        trendingProductIds,
+        websiteConfig,
+        aiKnowledgeConfig,
+        trendingConfig,
+        reviews,
+        restockSubscriptions,
         loading,
         seedInitialDataToFirestore,
         createOrder,
@@ -1641,11 +2046,12 @@ export const StoreProvider: React.FC<{ children: React.ReactNode }> = ({ childre
         addBanner,
         updateBanner,
         deleteBanner,
-        updateTrendingProducts,
-        subscribeToRestock,
-        unsubscribeFromRestock,
-        isSubscribedToRestock,
+        addVoucher,
+        updateVoucher,
+        deleteVoucher,
         addReview,
+        addBulkReviews,
+        updateReview,
         deleteReview,
         getProductReviews,
         sendSupportMessage,
@@ -1657,6 +2063,15 @@ export const StoreProvider: React.FC<{ children: React.ReactNode }> = ({ childre
         markAllNotificationsRead,
         topUpWallet,
         updateAnnouncementConfig,
+        updateWebsiteConfig,
+        updateAIKnowledge,
+        updateTrendingProducts,
+        saveMasterSet,
+        subscribeRestock,
+        cancelRestockSubscription,
+        isUserRestockSubscribed,
+        getUserRestockSubscription,
+        updateProductStockAndNotify,
       }}
     >
       {children}

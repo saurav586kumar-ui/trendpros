@@ -351,14 +351,19 @@ export const CartPage: React.FC<CartPageProps> = ({ onNavigate }) => {
             </div>
 
             <button
-              onClick={() =>
+              onClick={() => {
+                try {
+                  sessionStorage.setItem('trendpro_checkout_mode', 'cart');
+                  sessionStorage.removeItem('trendpro_buy_now_intent');
+                } catch {}
                 onNavigate('checkout', {
+                  mode: 'cart',
                   voucherCode: appliedVoucher?.code,
                   voucherDiscount,
                   useWallet: useWalletBalance,
                   walletUsed: walletDeduction,
-                })
-              }
+                });
+              }}
               className="w-full bg-gradient-to-r from-amber-500 to-amber-600 hover:from-amber-600 hover:to-amber-700 text-white font-extrabold py-3.5 rounded-xl shadow-lg shadow-amber-500/25 transition-all text-sm flex items-center justify-center gap-2 active:scale-95"
             >
               <span>Proceed to Checkout</span>

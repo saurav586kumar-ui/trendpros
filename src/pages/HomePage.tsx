@@ -1,50 +1,101 @@
-import React from 'react';
+import React, { useState, useMemo } from 'react';
 import {
   Sparkles,
   Flame,
   ArrowRight,
   TrendingUp,
   Tag,
-  Database
+  Database,
+  CheckCircle
 } from 'lucide-react';
 import { BannerCarousel } from '../components/home/BannerCarousel';
 import { CategoryRibbon } from '../components/home/CategoryRibbon';
 import { ProductCard } from '../components/common/ProductCard';
 import { useStore } from '../context/StoreContext';
 import { useAuth } from '../context/AuthContext';
+import { Product } from '../types';
 
 interface HomePageProps {
   onNavigate: (route: string, params?: Record<string, any>) => void;
 }
 
 export const HomePage: React.FC<HomePageProps> = ({ onNavigate }) => {
-  const { products, categories, banners, trendingProductIds, seedInitialDataToFirestore } = useStore();
+  const { products, categories, banners, seedInitialDataToFirestore, trendingConfig } = useStore();
   const { isAdmin } = useAuth();
+  const [seeded, setSeeded] = useState(false);
 
-  // Owner-controlled trending products: strictly selected products in order, filtering broken/inactive items
-  const trendingProducts = (
-    trendingProductIds.length > 0
-      ? trendingProductIds
-          .map((id) => products.find((p) => p.id === id))
-          .filter((p): p is typeof products[0] => Boolean(p && p.isActive !== false))
-      : products.filter((p) => p.isTrending && p.isActive !== false)
-  ).slice(0, 8);
-
-  const matchesCategory = (p: typeof products[0], target: string) => {
-    if (!p.isActive) return false;
-    const cat = target.toLowerCase();
-    const catIds = (p.categoryIds || []).map((c) => c.toLowerCase());
-    const cats = (p.categories || []).map((c) => c.toLowerCase());
-    return (
-      catIds.includes(cat) ||
-      catIds.includes(`cat-${cat}`) ||
-      cats.includes(cat) ||
-      (p.category && p.category.toLowerCase() === cat)
-    );
+  // Helper to test if product belongs to category by slug or id
+  const belongsToCategory = (p: Product, target: string): boolean => {
+    const t = target.toLowerCase();
+    if (p.category && p.category.toLowerCase() === t) return true;
+    if (p.categoryIds && p.categoryIds.some((c) => c.toLowerCase() === t)) return true;
+    if (p.categories && p.categories.some((c) => c.toLowerCase() === t)) return true;
+    return false;
   };
 
-  const techDeals = products.filter((p) => matchesCategory(p, 'electronics')).slice(0, 4);
-  const fashionDeals = products.filter((p) => matchesCategory(p, 'fashion')).slice(0, 4);
+  // Dedicated Owner-Curated Trending Products
+  const trendingProducts = useMemo(() => {
+    // 1. If owner has curated trending list in trendingConfig
+    if (trendingConfig?.items && trendingConfig.items.length > 0) {
+      const sorted = [...trendingConfig.items].sort((a, b) => a.priority - b.priority);
+      const list: Product[] = [];
+      const seen = new Set<string>();
+
+      for (const item of sorted) {
+        const prod = products.find((p) => p.id === item.productId && p.isActive);
+        if (prod && !seen.has(prod.id)) {
+          seen.add(prod.id);
+          list.push(prod);
+        }
+      }
+      if (list.length > 0) return list;
+    }
+
+    // 2. Fallback only to owner-selected isTrending products (never arbitrary high rating)
+    const fallbackList = products
+      .filter((p) => p.isActive && Boolean(p.isTrending))
+      .sort((a, b) => (a.trendingOrder ?? 999) - (b.trendingOrder ?? 999));
+
+    // 3. Fallback to top featured if no trending curated yet
+    if (fallbackList.length > 0) return fallbackList;
+    return products.filter((p) => p.isActive && p.isFeatured).slice(0, 4);
+  }, [products, trendingConfig]);
+
+  // Multi-category supported Tech Deals
+  const techDeals = useMemo(() => {
+    const list: Product[] = [];
+    const seen = new Set<string>();
+    for (const p of products) {
+      if (!p.isActive || seen.has(p.id)) continue;
+      if (
+        belongsToCategory(p, 'electronics') ||
+        belongsToCategory(p, 'cat-electronics') ||
+        belongsToCategory(p, 'mobiles')
+      ) {
+        seen.add(p.id);
+        list.push(p);
+      }
+    }
+    return list.slice(0, 4);
+  }, [products]);
+
+  // Multi-category supported Fashion Deals
+  const fashionDeals = useMemo(() => {
+    const list: Product[] = [];
+    const seen = new Set<string>();
+    for (const p of products) {
+      if (!p.isActive || seen.has(p.id)) continue;
+      if (
+        belongsToCategory(p, 'fashion') ||
+        belongsToCategory(p, 'cat-fashion') ||
+        belongsToCategory(p, 'apparel')
+      ) {
+        seen.add(p.id);
+        list.push(p);
+      }
+    }
+    return list.slice(0, 4);
+  }, [products]);
 
   return (
     <div className="space-y-12 pb-16">
@@ -73,11 +124,19 @@ export const HomePage: React.FC<HomePageProps> = ({ onNavigate }) => {
             <button
               onClick={async () => {
                 await seedInitialDataToFirestore();
-                alert('Successfully synced 12+ products, categories, banners & vouchers to Cloud Firestore!');
+                setSeeded(true);
+                setTimeout(() => setSeeded(false), 4000);
               }}
-              className="bg-indigo-600 hover:bg-indigo-700 text-white text-xs font-bold px-4 py-2.5 rounded-xl transition-all shadow-md active:scale-95 whitespace-nowrap"
+              className="bg-indigo-600 hover:bg-indigo-700 text-white text-xs font-bold px-4 py-2.5 rounded-xl transition-all shadow-md active:scale-95 whitespace-nowrap flex items-center gap-1.5 cursor-pointer"
             >
-              Seed/Sync Firestore Catalog
+              {seeded ? (
+                <>
+                  <CheckCircle className="w-4 h-4 text-emerald-300" />
+                  <span>Synced Successfully!</span>
+                </>
+              ) : (
+                <span>Seed/Sync Firestore Catalog</span>
+              )}
             </button>
           </div>
         </div>

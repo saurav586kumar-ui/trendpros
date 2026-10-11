@@ -107,6 +107,21 @@
         "updatedAt": { "type": "string" }
       },
       "required": ["id", "conversationId", "customerUid", "ownerUid"]
+    },
+    "RestockSubscription": {
+      "title": "RestockSubscription",
+      "description": "Customer subscription for out-of-stock product restock alerts",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string" },
+        "userId": { "type": "string" },
+        "productId": { "type": "string" },
+        "variant": { "type": "string" },
+        "customerEmail": { "type": "string" },
+        "status": { "type": "string" },
+        "createdAt": { "type": "string" }
+      },
+      "required": ["id", "userId", "productId"]
     }
   },
   "firestore": {
@@ -137,6 +152,10 @@
     "/chats/{chatId}": {
       "schema": "Chat",
       "description": "Customer-to-owner support chat conversations"
+    },
+    "/restockSubscriptions/{subId}": {
+      "schema": "RestockSubscription",
+      "description": "Out of stock restock alert subscriptions"
     }
   }
 }

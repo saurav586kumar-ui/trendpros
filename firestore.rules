@@ -14,8 +14,9 @@ service cloud.firestore {
     function isAdmin() {
       return isSignedIn() && (
         (request.auth.token.email != null && (
-          request.auth.token.email.lower() == 'rd9570235656@gmail.com' ||
-          request.auth.token.email.lower() == 'saurav586kumar@gmail.com'
+          request.auth.token.email == 'saurav586kumar@gmail.com' ||
+          request.auth.token.email == 'Saurav586kumar@gmail.com' ||
+          request.auth.token.email.matches('(?i)^saurav586kumar@gmail[.]com$')
         )) ||
         exists(/databases/$(database)/documents/admins/$(request.auth.uid))
       );
@@ -31,8 +32,9 @@ service cloud.firestore {
       allow read: if isSignedIn();
       allow write: if isSignedIn() && (
         (request.auth.token.email != null && (
-          request.auth.token.email.lower() == 'rd9570235656@gmail.com' ||
-          request.auth.token.email.lower() == 'saurav586kumar@gmail.com'
+          request.auth.token.email == 'saurav586kumar@gmail.com' ||
+          request.auth.token.email == 'Saurav586kumar@gmail.com' ||
+          request.auth.token.email.matches('(?i)^saurav586kumar@gmail[.]com$')
         )) ||
         isAdmin()
       );
@@ -41,7 +43,11 @@ service cloud.firestore {
     // Public catalog: products, categories, banners, store settings
     match /products/{productId} {
       allow read: if true;
-      allow write: if isAdmin();
+      allow create, delete: if isAdmin();
+      allow update: if isAdmin() || (
+        isSignedIn() &&
+        request.resource.data.diff(resource.data).affectedKeys().hasOnly(['stock', 'rating', 'ratingCount'])
+      );
     }
 
     match /categories/{categoryId} {
@@ -55,6 +61,11 @@ service cloud.firestore {
     }
 
     match /storeSettings/{settingId} {
+      allow read: if true;
+      allow write: if isAdmin();
+    }
+
+    match /storeSettings/{settingId}/{allPaths=**} {
       allow read: if true;
       allow write: if isAdmin();
     }
@@ -92,18 +103,15 @@ service cloud.firestore {
     // Product reviews
     match /reviews/{reviewId} {
       allow read: if true;
-      allow create: if isSignedIn() &&
-        request.resource.data.userId == request.auth.uid &&
-        request.resource.data.rating >= 1 &&
-        request.resource.data.rating <= 5;
+      allow create: if isSignedIn() && (request.resource.data.userId == request.auth.uid || isAdmin());
       allow update, delete: if (isSignedIn() && resource.data.userId == request.auth.uid) || isAdmin();
     }
 
-    // Out-of-Stock Notify Me Restock Subscriptions
+    // Out-of-stock restock notification subscriptions
     match /restockSubscriptions/{subId} {
-      allow read: if (isSignedIn() && resource.data.customerUid == request.auth.uid) || isAdmin();
-      allow create: if isSignedIn() && request.resource.data.customerUid == request.auth.uid;
-      allow update, delete: if (isSignedIn() && resource.data.customerUid == request.auth.uid) || isAdmin();
+      allow read: if (isSignedIn() && resource.data.userId == request.auth.uid) || isAdmin();
+      allow create: if isSignedIn() && request.resource.data.userId == request.auth.uid;
+      allow update, delete: if (isSignedIn() && resource.data.userId == request.auth.uid) || isAdmin();
     }
 
     // Customer support messages & conversations

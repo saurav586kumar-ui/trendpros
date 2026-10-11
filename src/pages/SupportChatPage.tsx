@@ -217,6 +217,19 @@ export const SupportChatPage: React.FC<SupportChatPageProps> = ({
     messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' });
   }, [supportMessages, pendingMessages]);
 
+  // Sync route params when navigation occurs
+  useEffect(() => {
+    if (customerUserIdParam) {
+      setAdminSelectedUserId(customerUserIdParam);
+    }
+  }, [customerUserIdParam]);
+
+  useEffect(() => {
+    if (orderIdParam) {
+      setSelectedOrderId(orderIdParam);
+    }
+  }, [orderIdParam]);
+
   // Clean up object URLs
   useEffect(() => {
     return () => {

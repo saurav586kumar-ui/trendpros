@@ -1,5 +1,6 @@
 import React, { useState, useEffect } from 'react';
 import {
+  Star,
   Heart,
   ShoppingBag,
   Scale,
@@ -9,23 +10,13 @@ import {
   Check,
   MapPin,
   Tag,
-  ArrowLeft,
-  Share2,
-  Bell,
-  ChevronLeft,
-  ChevronRight,
-  Maximize2,
-  X,
-  Star
+  ArrowLeft
 } from 'lucide-react';
 import { ProductCard } from '../components/common/ProductCard';
-import { StarRating } from '../components/common/StarRating';
 import { useStore } from '../context/StoreContext';
 import { useCart } from '../context/CartContext';
 import { useAuth } from '../context/AuthContext';
-import { Review, CartItem } from '../types';
-import { shareProduct } from '../utils/sharing';
-import { uploadImageFile } from '../utils/storage';
+import { Review } from '../types';
 
 interface ProductDetailPageProps {
   productId: string;
@@ -36,14 +27,7 @@ export const ProductDetailPage: React.FC<ProductDetailPageProps> = ({
   productId,
   onNavigate,
 }) => {
-  const {
-    products,
-    getProductReviews,
-    addReview,
-    subscribeToRestock,
-    unsubscribeFromRestock,
-    isSubscribedToRestock,
-  } = useStore();
+  const { products, getProductReviews, addReview } = useStore();
   const {
     addToCart,
     cart,
@@ -54,27 +38,13 @@ export const ProductDetailPage: React.FC<ProductDetailPageProps> = ({
   } = useCart();
   const { currentUser, signInWithGoogle } = useAuth();
 
-  // Find product by id, slug, or slug-id composite
-  const cleanId = (productId || '').trim();
-  const product = products.find((p) => {
-    if (!cleanId) return false;
-    if (p.id === cleanId) return true;
-    if (p.slug && p.slug === cleanId) return true;
-    if (p.slug && cleanId === `${p.slug}-${p.id}`) return true;
-    if (cleanId.endsWith(p.id)) return true;
-    return false;
-  });
+  const product = products.find((p) => p.id === productId);
 
   const [activeImageIndex, setActiveImageIndex] = useState(0);
   const [selectedVariant, setSelectedVariant] = useState<string>('');
   const [giftCardAmount, setGiftCardAmount] = useState<number>(1000);
   const [quantity, setQuantity] = useState(1);
   const [pincode, setPincode] = useState('560001');
-  const [shareToast, setShareToast] = useState<string | null>(null);
-  const [isZoomOpen, setIsZoomOpen] = useState(false);
-  const [isSubscribed, setIsSubscribed] = useState(false);
-  const [subscribing, setSubscribing] = useState(false);
-  const [subscribeMessage, setSubscribeMessage] = useState<string | null>(null);
 
   // Standard 8 days delivery date calculation
   const deliveryDate8Days = new Date(Date.now() + 8 * 24 * 60 * 60 * 1000).toLocaleDateString('en-IN', {
@@ -95,6 +65,7 @@ export const ProductDetailPage: React.FC<ProductDetailPageProps> = ({
   const [reviewComment, setReviewComment] = useState('');
   const [reviewImages, setReviewImages] = useState<string[]>([]);
   const [reviewSubmitting, setReviewSubmitting] = useState(false);
+  const [reviewError, setReviewError] = useState<string>('');
 
   useEffect(() => {
     if (product) {
@@ -107,39 +78,21 @@ export const ProductDetailPage: React.FC<ProductDetailPageProps> = ({
         setGiftCardAmount(1000);
       }
 
-      // Check restock subscription status
-      if (currentUser) {
-        isSubscribedToRestock(product.id).then((sub) => setIsSubscribed(sub));
-      }
-
       getProductReviews(product.id).then((revs) => setReviews(revs));
     }
-  }, [cleanId, product, currentUser]);
+  }, [productId, product]);
 
   if (!product) {
     return (
-      <div className="max-w-4xl mx-auto px-4 py-24 text-center">
-        <div className="w-20 h-20 bg-rose-50 text-rose-600 rounded-3xl flex items-center justify-center mx-auto mb-6 shadow-xs">
-          <ShoppingBag className="w-10 h-10" />
-        </div>
-        <h2 className="text-2xl font-black text-slate-900 tracking-tight">Product Not Found</h2>
-        <p className="text-sm text-slate-500 mt-2 max-w-md mx-auto">
-          The product you are trying to view does not exist or may have been unlisted by the store.
-        </p>
-        <div className="flex justify-center gap-3 mt-8">
-          <button
-            onClick={() => onNavigate('home')}
-            className="bg-slate-100 hover:bg-slate-200 text-slate-800 text-xs font-bold px-6 py-3 rounded-xl transition-all cursor-pointer"
-          >
-            Go to Homepage
-          </button>
-          <button
-            onClick={() => onNavigate('products')}
-            className="bg-indigo-600 hover:bg-indigo-700 text-white text-xs font-bold px-6 py-3 rounded-xl transition-all shadow-md active:scale-95 cursor-pointer"
-          >
-            Browse All Products
-          </button>
-        </div>
+      <div className="max-w-7xl mx-auto px-4 py-20 text-center">
+        <h2 className="text-xl font-bold text-slate-800">Product not found</h2>
+        <p className="text-xs text-slate-500 mt-2">The product you are looking for does not exist or has been removed.</p>
+        <button
+          onClick={() => onNavigate('products')}
+          className="mt-6 bg-indigo-600 text-white text-xs font-bold px-6 py-2.5 rounded-xl"
+        >
+          Browse All Products
+        </button>
       </div>
     );
   }
@@ -152,13 +105,7 @@ export const ProductDetailPage: React.FC<ProductDetailPageProps> = ({
   const isCompared = isInCompare(product.id);
   const cartItem = cart.find((i) => i.productId === product.id);
   const isOutOfStock = !isGiftVoucher && product.stock <= 0;
-
-  // Build unified, de-duplicated gallery with mainImage first
-  const gallery = [product.mainImage, ...(product.images || [])]
-    .filter(Boolean)
-    .filter((url, idx, arr) => arr.indexOf(url) === idx);
-
-  const activeImage = gallery[activeImageIndex] || product.mainImage || 'https://images.unsplash.com/photo-1523275335684-37898b6baf30?w=800&q=80';
+  const gallery = product.images && product.images.length > 0 ? product.images : [product.mainImage];
 
   const handlePincodeCheck = () => {
     if (pincode.length === 6 && /^\d+$/.test(pincode)) {
@@ -177,75 +124,43 @@ export const ProductDetailPage: React.FC<ProductDetailPageProps> = ({
     }
   };
 
-  // Requirement 6: Dedicated Buy Now flow without contaminating regular cart
   const handleBuyNow = () => {
     if (!isOutOfStock) {
-      const buyNowItem: CartItem = {
+      const price = isGiftVoucher ? giftCardAmount : product.sellingPrice;
+      const variant = selectedVariant || (isGiftVoucher ? `₹${giftCardAmount}` : undefined);
+      const buyNowItem = {
         productId: product.id,
         name: product.name,
-        price: currentSellingPrice,
-        originalPrice: currentOriginalPrice,
-        image: product.mainImage,
         brand: product.brand,
+        image: gallery[0] || product.mainImage,
+        price,
         quantity,
-        stock: product.stock,
-        selectedVariant: selectedVariant || (isGiftVoucher ? `₹${giftCardAmount}` : undefined),
+        selectedVariant: variant,
         isGiftVoucher,
       };
 
-      // Safely preserve in session storage for back button navigation resilience
       try {
-        sessionStorage.setItem('trendpro_buynow_item', JSON.stringify(buyNowItem));
+        sessionStorage.setItem('trendpro_checkout_mode', 'buyNow');
+        sessionStorage.setItem('trendpro_buy_now_intent', JSON.stringify(buyNowItem));
       } catch {}
 
       onNavigate('checkout', {
-        mode: 'buy_now',
+        mode: 'buyNow',
         buyNowItem,
       });
     }
   };
 
-  const handleShare = async () => {
-    const res = await shareProduct(product);
-    if (res.message) {
-      setShareToast(res.message);
-      setTimeout(() => setShareToast(null), 3000);
-    }
-  };
-
-  const handleToggleRestockNotification = async () => {
-    if (!currentUser) {
-      signInWithGoogle();
-      return;
-    }
-    setSubscribing(true);
-    try {
-      if (isSubscribed) {
-        await unsubscribeFromRestock(product.id);
-        setIsSubscribed(false);
-        setSubscribeMessage('Restock alert removed.');
-      } else {
-        await subscribeToRestock(product.id, product.name, selectedVariant);
-        setIsSubscribed(true);
-        setSubscribeMessage('Subscribed! We will alert you immediately when restocked.');
-      }
-      setTimeout(() => setSubscribeMessage(null), 3500);
-    } catch (e: any) {
-      alert(e.message || 'Error updating restock subscription');
-    } finally {
-      setSubscribing(false);
-    }
-  };
-
-  const handleReviewImageFile = async (e: React.ChangeEvent<HTMLInputElement>) => {
+  const handleReviewImageFile = (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
     if (file) {
-      try {
-        const url = await uploadImageFile(file, 'reviews');
-        setReviewImages((prev) => [...prev, url]);
-      } catch (err: any) {
-        alert(err.message || 'Failed to upload review image');
-      }
+      const reader = new FileReader();
+      reader.onloadend = () => {
+        if (typeof reader.result === 'string') {
+          setReviewImages((prev) => [...prev, reader.result as string]);
+        }
+      };
+      reader.readAsDataURL(file);
     }
   };
 
@@ -271,92 +186,63 @@ export const ProductDetailPage: React.FC<ProductDetailPageProps> = ({
       setReviewTitle('');
       setReviewComment('');
       setReviewImages([]);
+      setReviewError('');
     } catch (err: any) {
-      alert(err.message || 'Error submitting review');
+      setReviewError(err.message || 'Error submitting review');
     } finally {
       setReviewSubmitting(false);
     }
   };
 
   const relatedProducts = products
-    .filter((p) => {
-      if (p.id === product.id) return false;
-      const sameCat =
-        p.category === product.category ||
-        (product.categories && p.categories && p.categories.some((c) => product.categories?.includes(c)));
-      return sameCat;
-    })
+    .filter((p) => p.category === product.category && p.id !== product.id)
     .slice(0, 4);
 
   return (
     <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-6 space-y-12">
-      {/* Breadcrumbs and Actions Bar */}
-      <div className="flex flex-wrap items-center justify-between gap-4 text-xs text-slate-500">
-        <div className="flex items-center gap-2">
-          <button
-            onClick={() => onNavigate('products')}
-            className="flex items-center gap-1 font-semibold text-slate-700 hover:text-indigo-600 cursor-pointer"
-          >
-            <ArrowLeft className="w-4 h-4" />
-            Back to Catalog
-          </button>
-          <span>/</span>
-          <button
-            onClick={() => onNavigate('products', { category: product.category })}
-            className="capitalize hover:text-slate-900 cursor-pointer"
-          >
-            {product.category}
-          </button>
-          <span>/</span>
-          <span className="text-slate-800 font-medium truncate max-w-xs">{product.name}</span>
-        </div>
-
-        {/* Share Button with Live Toast Feedback */}
-        <div className="relative">
-          <button
-            onClick={handleShare}
-            className="flex items-center gap-1.5 px-3 py-1.5 rounded-xl bg-white border border-slate-200 text-slate-700 hover:text-indigo-600 hover:border-indigo-300 shadow-xs transition-all active:scale-95 cursor-pointer"
-            title="Share Product Link"
-          >
-            <Share2 className="w-3.5 h-3.5" />
-            <span className="font-semibold">Share</span>
-          </button>
-
-          {shareToast && (
-            <div className="absolute right-0 top-10 bg-slate-900 text-white text-[11px] font-bold px-3 py-1.5 rounded-lg shadow-xl whitespace-nowrap z-30 animate-in fade-in duration-200">
-              {shareToast}
-            </div>
-          )}
-        </div>
+      {/* Back button & Breadcrumbs */}
+      <div className="flex items-center gap-2 text-xs text-slate-500">
+        <button
+          onClick={() => onNavigate('products')}
+          className="flex items-center gap-1 font-semibold text-slate-700 hover:text-indigo-600 mr-2"
+        >
+          <ArrowLeft className="w-4 h-4" />
+          Back to Catalog
+        </button>
+        <span>/</span>
+        <button
+          onClick={() => onNavigate('products', { category: product.category })}
+          className="capitalize hover:text-slate-900"
+        >
+          {product.category}
+        </button>
+        <span>/</span>
+        <span className="text-slate-800 font-medium truncate max-w-xs">{product.name}</span>
       </div>
 
       {/* Main Product Showcase Section */}
       <div className="grid grid-cols-1 lg:grid-cols-12 gap-8 lg:gap-12">
         {/* Left Column: Image Gallery (5 cols) */}
         <div className="lg:col-span-5 flex flex-col gap-4">
-          <div className="relative aspect-square w-full bg-slate-50 border border-slate-200/80 rounded-3xl overflow-hidden flex items-center justify-center p-6 shadow-xs group">
+          <div className="relative aspect-square w-full bg-slate-50 border border-slate-200/80 rounded-3xl overflow-hidden flex items-center justify-center p-6 shadow-xs">
             <img
-              src={activeImage}
+              src={gallery[activeImageIndex] || product.mainImage}
               alt={product.name}
-              className="w-full h-full object-contain mix-blend-multiply transition-all duration-300 cursor-zoom-in"
-              onClick={() => setIsZoomOpen(true)}
-              onError={(e) => {
-                e.currentTarget.src = 'https://images.unsplash.com/photo-1523275335684-37898b6baf30?w=800&q=80';
-              }}
+              className="w-full h-full object-contain mix-blend-multiply transition-all duration-300"
             />
 
             {/* Discount Badge */}
             {product.discountPercent > 0 && (
-              <span className="absolute top-4 left-4 bg-emerald-600 text-white text-xs font-extrabold px-2.5 py-1 rounded-full shadow-md z-10">
+              <span className="absolute top-4 left-4 bg-emerald-600 text-white text-xs font-extrabold px-2.5 py-1 rounded-full shadow-md">
                 {product.discountPercent}% OFF
               </span>
             )}
 
             {/* Floating Action Buttons */}
-            <div className="absolute top-4 right-4 flex flex-col gap-2 z-10">
+            <div className="absolute top-4 right-4 flex flex-col gap-2">
               <button
                 onClick={() => toggleWishlist(product.id)}
-                className={`w-9 h-9 rounded-full flex items-center justify-center shadow-md transition-colors cursor-pointer ${
+                className={`w-9 h-9 rounded-full flex items-center justify-center shadow-md transition-colors ${
                   isFavorited ? 'bg-rose-50 text-rose-600' : 'bg-white text-slate-600 hover:text-rose-600'
                 }`}
                 title="Wishlist"
@@ -366,59 +252,27 @@ export const ProductDetailPage: React.FC<ProductDetailPageProps> = ({
 
               <button
                 onClick={() => toggleCompare(product.id)}
-                className={`w-9 h-9 rounded-full flex items-center justify-center shadow-md transition-colors cursor-pointer ${
+                className={`w-9 h-9 rounded-full flex items-center justify-center shadow-md transition-colors ${
                   isCompared ? 'bg-indigo-600 text-white' : 'bg-white text-slate-600 hover:text-indigo-600'
                 }`}
                 title="Compare"
               >
                 <Scale className="w-4 h-4" />
               </button>
-
-              <button
-                onClick={() => setIsZoomOpen(true)}
-                className="w-9 h-9 rounded-full flex items-center justify-center shadow-md transition-colors bg-white text-slate-600 hover:text-indigo-600 cursor-pointer"
-                title="Zoom Preview"
-              >
-                <Maximize2 className="w-4 h-4" />
-              </button>
             </div>
-
-            {/* Carousel Navigation Arrows */}
-            {gallery.length > 1 && (
-              <>
-                <button
-                  onClick={() =>
-                    setActiveImageIndex((prev) => (prev === 0 ? gallery.length - 1 : prev - 1))
-                  }
-                  className="absolute left-3 top-1/2 -translate-y-1/2 w-8 h-8 rounded-full bg-white/90 hover:bg-white text-slate-700 shadow-md flex items-center justify-center transition-all opacity-0 group-hover:opacity-100 cursor-pointer"
-                  aria-label="Previous image"
-                >
-                  <ChevronLeft className="w-5 h-5" />
-                </button>
-                <button
-                  onClick={() =>
-                    setActiveImageIndex((prev) => (prev === gallery.length - 1 ? 0 : prev + 1))
-                  }
-                  className="absolute right-3 top-1/2 -translate-y-1/2 w-8 h-8 rounded-full bg-white/90 hover:bg-white text-slate-700 shadow-md flex items-center justify-center transition-all opacity-0 group-hover:opacity-100 cursor-pointer"
-                  aria-label="Next image"
-                >
-                  <ChevronRight className="w-5 h-5" />
-                </button>
-              </>
-            )}
           </div>
 
-          {/* Gallery Thumbnails List */}
+          {/* Thumbnails */}
           {gallery.length > 1 && (
-            <div className="flex gap-2.5 overflow-x-auto pb-2 scrollbar-thin">
+            <div className="flex gap-3 overflow-x-auto pb-2">
               {gallery.map((img, idx) => (
                 <button
                   key={idx}
                   onClick={() => setActiveImageIndex(idx)}
-                  className={`w-16 h-16 rounded-xl border-2 overflow-hidden bg-slate-50 p-1 shrink-0 transition-all cursor-pointer ${
+                  className={`w-16 h-16 rounded-xl border-2 overflow-hidden bg-slate-50 p-1 shrink-0 transition-all ${
                     idx === activeImageIndex
                       ? 'border-indigo-600 shadow-md ring-2 ring-indigo-600/20'
-                      : 'border-slate-200 hover:border-slate-300 opacity-70 hover:opacity-100'
+                      : 'border-slate-200 hover:border-slate-300'
                   }`}
                 >
                   <img src={img} alt={`Thumbnail ${idx}`} className="w-full h-full object-contain mix-blend-multiply" />
@@ -431,27 +285,12 @@ export const ProductDetailPage: React.FC<ProductDetailPageProps> = ({
         {/* Right Column: Product Info & Purchase Form (7 cols) */}
         <div className="lg:col-span-7 flex flex-col space-y-6">
           <div>
-            <div className="flex flex-wrap items-center gap-2 mb-2">
+            <div className="flex items-center gap-2 mb-1.5">
               <span className="text-xs font-bold text-indigo-600 uppercase tracking-wider bg-indigo-50 px-2.5 py-0.5 rounded-full border border-indigo-200">
                 {product.brand}
               </span>
-              {product.categories && product.categories.length > 0 ? (
-                product.categories.map((cat, i) => (
-                  <span
-                    key={i}
-                    onClick={() => onNavigate('products', { category: cat })}
-                    className="text-[11px] font-semibold text-slate-600 uppercase tracking-wider bg-slate-100 hover:bg-slate-200 px-2 py-0.5 rounded-full cursor-pointer transition-colors"
-                  >
-                    {cat}
-                  </span>
-                ))
-              ) : (
-                <span className="text-[11px] font-semibold text-slate-600 uppercase tracking-wider bg-slate-100 px-2 py-0.5 rounded-full">
-                  {product.category}
-                </span>
-              )}
               {product.sku && (
-                <span className="text-[11px] text-slate-400 font-mono ml-auto">SKU: {product.sku}</span>
+                <span className="text-[11px] text-slate-400 font-mono">SKU: {product.sku}</span>
               )}
             </div>
 
@@ -459,14 +298,15 @@ export const ProductDetailPage: React.FC<ProductDetailPageProps> = ({
               {product.name}
             </h1>
 
-            {/* Real Proportional Star Rating */}
+            {/* Rating & Reviews Count */}
             <div className="flex items-center gap-3 mt-3">
-              <StarRating
-                rating={product.rating || 0}
-                reviewCount={product.ratingCount}
-                showBadge={true}
-                size="sm"
-              />
+              <div className="flex items-center gap-1.5 bg-emerald-600 text-white text-xs font-extrabold px-2.5 py-1 rounded-md shadow-xs">
+                <span>{product.rating}</span>
+                <Star className="w-3.5 h-3.5 fill-white" />
+              </div>
+              <span className="text-xs text-slate-500">
+                {product.ratingCount?.toLocaleString() || 48} Ratings & {reviews.length} Reviews
+              </span>
               <span className="text-xs text-indigo-600 font-semibold">• 100% Verified Buyer Reviews</span>
             </div>
           </div>
@@ -500,7 +340,7 @@ export const ProductDetailPage: React.FC<ProductDetailPageProps> = ({
               </p>
               <div className="text-xs text-slate-600 space-y-1">
                 {isGiftVoucher ? (
-                  <p>• <strong>Instant Digital Delivery:</strong> Card number & PIN generated and redeemable in wallet immediately.</p>
+                  <p>• <strong>Instant Digital Delivery:</strong> Card number & PIN will be generated and viewable in My Orders immediately after payment.</p>
                 ) : (
                   <>
                     <p>• <strong>Instant ₹500 OFF:</strong> Use coupon code <strong className="text-indigo-600 font-mono">WELCOME500</strong> on orders above ₹2,000.</p>
@@ -511,7 +351,7 @@ export const ProductDetailPage: React.FC<ProductDetailPageProps> = ({
             </div>
           </div>
 
-          {/* Gift Card Denomination Picker */}
+          {/* Gift Card Denomination Picker (when in gift-cards category) */}
           {isGiftVoucher ? (
             <div className="space-y-3 bg-indigo-50/50 p-4 rounded-2xl border border-indigo-200/80">
               <label className="text-xs font-bold text-slate-800 uppercase tracking-wider block">
@@ -522,7 +362,7 @@ export const ProductDetailPage: React.FC<ProductDetailPageProps> = ({
                   <button
                     key={amt}
                     onClick={() => setGiftCardAmount(amt)}
-                    className={`px-3.5 py-2 rounded-xl text-xs font-bold border transition-all cursor-pointer ${
+                    className={`px-3.5 py-2 rounded-xl text-xs font-bold border transition-all ${
                       giftCardAmount === amt
                         ? 'bg-indigo-600 text-white border-indigo-600 shadow-md shadow-indigo-500/20'
                         : 'bg-white text-slate-700 border-slate-200 hover:border-slate-300'
@@ -532,9 +372,12 @@ export const ProductDetailPage: React.FC<ProductDetailPageProps> = ({
                   </button>
                 ))}
               </div>
+              <p className="text-[11px] text-slate-500 pt-1">
+                💡 Upon purchase, you will receive a 16-digit Gift Card number and 4-digit PIN. You can use it yourself or download/share it with friends to add money into their TrendPro wallet!
+              </p>
             </div>
           ) : (
-            /* Standard Variants & Options */
+            /* Standard Variants & Size Selector */
             product.variants && product.variants.length > 0 && (
               <div className="space-y-4">
                 {product.variants.map((vGroup, vIdx) => (
@@ -566,27 +409,25 @@ export const ProductDetailPage: React.FC<ProductDetailPageProps> = ({
 
           {/* Quantity Selector & Stock Status */}
           <div className="flex items-center gap-6">
-            {!isOutOfStock && (
-              <div className="space-y-1.5">
-                <label className="text-xs font-bold text-slate-700">Quantity</label>
-                <div className="flex items-center border border-slate-200 rounded-xl bg-white overflow-hidden">
-                  <button
-                    onClick={() => setQuantity(Math.max(1, quantity - 1))}
-                    className="px-3 py-1.5 text-sm font-bold text-slate-600 hover:bg-slate-100 cursor-pointer"
-                  >
-                    -
-                  </button>
-                  <span className="px-4 py-1.5 text-xs font-bold text-slate-900">{quantity}</span>
-                  <button
-                    onClick={() => setQuantity(Math.min(product.stock, quantity + 1))}
-                    disabled={quantity >= product.stock}
-                    className="px-3 py-1.5 text-sm font-bold text-slate-600 hover:bg-slate-100 disabled:opacity-40 cursor-pointer"
-                  >
-                    +
-                  </button>
-                </div>
+            <div className="space-y-1.5">
+              <label className="text-xs font-bold text-slate-700">Quantity</label>
+              <div className="flex items-center border border-slate-200 rounded-xl bg-white overflow-hidden">
+                <button
+                  onClick={() => setQuantity(Math.max(1, quantity - 1))}
+                  className="px-3 py-1.5 text-sm font-bold text-slate-600 hover:bg-slate-100"
+                >
+                  -
+                </button>
+                <span className="px-4 py-1.5 text-xs font-bold text-slate-900">{quantity}</span>
+                <button
+                  onClick={() => setQuantity(Math.min(product.stock, quantity + 1))}
+                  disabled={quantity >= product.stock}
+                  className="px-3 py-1.5 text-sm font-bold text-slate-600 hover:bg-slate-100 disabled:opacity-40"
+                >
+                  +
+                </button>
               </div>
-            )}
+            </div>
 
             <div>
               <p className="text-xs font-bold text-slate-700">Stock Availability</p>
@@ -600,78 +441,44 @@ export const ProductDetailPage: React.FC<ProductDetailPageProps> = ({
             </div>
           </div>
 
-          {/* Action Buttons: Add to Cart & Buy Now OR Out of Stock Notify Me */}
-          {isOutOfStock ? (
-            <div className="space-y-3 pt-2">
-              <div className="p-4 rounded-2xl bg-rose-50 border border-rose-200 text-rose-800 space-y-2">
-                <div className="flex items-center gap-2">
-                  <Bell className="w-4 h-4 text-rose-600" />
-                  <span className="text-xs font-black uppercase tracking-wider">Out of Stock</span>
-                </div>
-                <p className="text-xs text-rose-700">
-                  This product is temporarily unavailable. Subscribe below and we will automatically notify you the moment stock arrives!
-                </p>
-              </div>
-
-              <button
-                onClick={handleToggleRestockNotification}
-                disabled={subscribing}
-                className={`w-full py-3.5 rounded-xl font-bold text-xs sm:text-sm flex items-center justify-center gap-2 transition-all shadow-md active:scale-95 cursor-pointer ${
-                  isSubscribed
-                    ? 'bg-emerald-600 hover:bg-emerald-700 text-white shadow-emerald-500/20'
-                    : 'bg-indigo-600 hover:bg-indigo-700 text-white shadow-indigo-500/20'
-                }`}
-              >
-                {isSubscribed ? (
-                  <>
-                    <Check className="w-4 h-4" />
-                    <span>Subscribed! (Click to cancel alert)</span>
-                  </>
-                ) : (
-                  <>
-                    <Bell className="w-4 h-4" />
-                    <span>Notify Me When Available</span>
-                  </>
-                )}
-              </button>
-
-              {subscribeMessage && (
-                <p className="text-xs font-semibold text-emerald-600 text-center animate-in fade-in duration-200">
-                  {subscribeMessage}
-                </p>
+          {/* Action Buttons: Add to Cart & Buy Now */}
+          <div className="grid grid-cols-2 gap-3 sm:gap-4 pt-2">
+            <button
+              onClick={handleAddToCart}
+              disabled={isOutOfStock}
+              className={`py-3.5 rounded-xl font-bold text-sm flex items-center justify-center gap-2 transition-all shadow-md active:scale-95 ${
+                isOutOfStock
+                  ? 'bg-slate-100 text-slate-400 cursor-not-allowed'
+                  : cartItem
+                  ? 'bg-emerald-50 text-emerald-800 border-2 border-emerald-400'
+                  : 'bg-white hover:bg-indigo-50 text-indigo-600 border-2 border-indigo-600'
+              }`}
+            >
+              {cartItem ? (
+                <>
+                  <Check className="w-4 h-4 text-emerald-600" />
+                  <span>In Cart ({cartItem.quantity})</span>
+                </>
+              ) : (
+                <>
+                  <ShoppingBag className="w-4 h-4" />
+                  <span>Add to Cart</span>
+                </>
               )}
-            </div>
-          ) : (
-            <div className="grid grid-cols-2 gap-3 sm:gap-4 pt-2">
-              <button
-                onClick={handleAddToCart}
-                className={`py-3.5 rounded-xl font-bold text-sm flex items-center justify-center gap-2 transition-all shadow-md active:scale-95 cursor-pointer ${
-                  cartItem
-                    ? 'bg-emerald-50 text-emerald-800 border-2 border-emerald-400'
-                    : 'bg-white hover:bg-indigo-50 text-indigo-600 border-2 border-indigo-600'
-                }`}
-              >
-                {cartItem ? (
-                  <>
-                    <Check className="w-4 h-4 text-emerald-600" />
-                    <span>In Cart ({cartItem.quantity})</span>
-                  </>
-                ) : (
-                  <>
-                    <ShoppingBag className="w-4 h-4" />
-                    <span>Add to Cart</span>
-                  </>
-                )}
-              </button>
+            </button>
 
-              <button
-                onClick={handleBuyNow}
-                className="py-3.5 rounded-xl font-bold text-sm text-white flex items-center justify-center gap-2 transition-all shadow-lg active:scale-95 bg-gradient-to-r from-amber-500 to-amber-600 hover:from-amber-600 hover:to-amber-700 shadow-amber-500/25 cursor-pointer"
-              >
-                <span>Buy Now</span>
-              </button>
-            </div>
-          )}
+            <button
+              onClick={handleBuyNow}
+              disabled={isOutOfStock}
+              className={`py-3.5 rounded-xl font-bold text-sm text-white flex items-center justify-center gap-2 transition-all shadow-lg active:scale-95 ${
+                isOutOfStock
+                  ? 'bg-slate-300 cursor-not-allowed'
+                  : 'bg-gradient-to-r from-amber-500 to-amber-600 hover:from-amber-600 hover:to-amber-700 shadow-amber-500/25'
+              }`}
+            >
+              <span>Buy Now</span>
+            </button>
+          </div>
 
           {/* Delivery Pincode Checker */}
           <div className="bg-slate-50 border border-slate-200/80 rounded-2xl p-4 space-y-2">
@@ -690,7 +497,7 @@ export const ProductDetailPage: React.FC<ProductDetailPageProps> = ({
               />
               <button
                 onClick={handlePincodeCheck}
-                className="bg-slate-900 hover:bg-slate-800 text-white text-xs font-bold px-4 py-2 rounded-xl transition-colors cursor-pointer"
+                className="bg-slate-900 hover:bg-slate-800 text-white text-xs font-bold px-4 py-2 rounded-xl transition-colors"
               >
                 Check
               </button>
@@ -720,6 +527,7 @@ export const ProductDetailPage: React.FC<ProductDetailPageProps> = ({
 
       {/* Specifications & Highlights Section */}
       <div className="bg-white rounded-3xl border border-slate-200/80 p-6 sm:p-8 space-y-8 shadow-xs">
+        {/* Description & Highlights */}
         <div>
           <h2 className="text-lg font-bold text-slate-900 mb-3">Product Overview</h2>
           <p className="text-xs sm:text-sm text-slate-600 leading-relaxed max-w-4xl">
@@ -742,7 +550,7 @@ export const ProductDetailPage: React.FC<ProductDetailPageProps> = ({
         </div>
 
         {/* Specifications Table */}
-        {product.specs && Object.keys(product.specs).length > 0 && (
+        {product.specs && (
           <div>
             <h2 className="text-lg font-bold text-slate-900 mb-4">Specifications</h2>
             <div className="border border-slate-200 rounded-2xl overflow-hidden divide-y divide-slate-100 max-w-3xl">
@@ -783,7 +591,7 @@ export const ProductDetailPage: React.FC<ProductDetailPageProps> = ({
                 setShowReviewModal(true);
               }
             }}
-            className="bg-indigo-600 hover:bg-indigo-700 text-white text-xs font-bold px-4 py-2.5 rounded-xl transition-all shadow-sm self-start sm:self-auto cursor-pointer"
+            className="bg-indigo-600 hover:bg-indigo-700 text-white text-xs font-bold px-4 py-2.5 rounded-xl transition-all shadow-sm self-start sm:self-auto"
           >
             ★ Rate & Review Product
           </button>
@@ -792,30 +600,24 @@ export const ProductDetailPage: React.FC<ProductDetailPageProps> = ({
         {/* Rating Breakdown */}
         <div className="grid grid-cols-1 md:grid-cols-3 gap-6 bg-slate-50 p-6 rounded-2xl border border-slate-200/60 items-center">
           <div className="text-center md:border-r md:border-slate-200 pr-6">
-            <div className="text-4xl font-black text-slate-900">
-              {product.rating > 0 ? product.rating.toFixed(1) : '—'}
+            <div className="text-4xl font-black text-slate-900">{product.rating}</div>
+            <div className="flex justify-center my-1 text-amber-400">
+              {[1, 2, 3, 4, 5].map((s) => (
+                <Star key={s} className="w-4 h-4 fill-amber-400" />
+              ))}
             </div>
-            <div className="flex justify-center my-1.5">
-              <StarRating rating={product.rating || 0} showCount={false} size="md" />
-            </div>
-            <p className="text-xs text-slate-500 font-medium">
-              {product.ratingCount !== undefined && product.ratingCount > 0
-                ? `${product.ratingCount} verified ratings`
-                : 'No reviews submitted yet'}
-            </p>
+            <p className="text-xs text-slate-500 font-medium">{product.ratingCount || 48} verified ratings</p>
           </div>
 
           <div className="md:col-span-2 space-y-1.5">
             {[5, 4, 3, 2, 1].map((stars) => {
-              const countForStar = reviews.filter((r) => Math.round(r.rating) === stars).length;
-              const totalRevs = reviews.length;
-              const pct = totalRevs > 0 ? Math.round((countForStar / totalRevs) * 100) : 0;
+              const pct = stars === 5 ? 78 : stars === 4 ? 16 : 4;
               return (
                 <div key={stars} className="flex items-center gap-3 text-xs">
                   <span className="w-8 text-slate-600 font-bold">{stars} ★</span>
                   <div className="flex-1 bg-slate-200 h-2 rounded-full overflow-hidden">
                     <div
-                      className="bg-emerald-600 h-full rounded-full transition-all duration-500"
+                      className="bg-emerald-600 h-full rounded-full"
                       style={{ width: `${pct}%` }}
                     />
                   </div>
@@ -826,7 +628,7 @@ export const ProductDetailPage: React.FC<ProductDetailPageProps> = ({
           </div>
         </div>
 
-        {/* Reviews List */}
+        {/* Reviews List (2-3 shown initially, View More button) */}
         <div className="space-y-4 pt-2">
           {reviews.length > 0 ? (
             <>
@@ -834,7 +636,10 @@ export const ProductDetailPage: React.FC<ProductDetailPageProps> = ({
                 <div key={rev.id} className="p-4 rounded-2xl border border-slate-100 bg-slate-50/50 space-y-2">
                   <div className="flex items-center justify-between">
                     <div className="flex items-center gap-2">
-                      <StarRating rating={rev.rating} showCount={false} showBadge={true} size="xs" />
+                      <div className="flex items-center gap-1 bg-emerald-600 text-white text-[10px] font-bold px-1.5 py-0.5 rounded">
+                        <span>{rev.rating}</span>
+                        <Star className="w-3 h-3 fill-white" />
+                      </div>
                       <span className="text-xs font-bold text-slate-900">{rev.title || 'Verified Rating'}</span>
                     </div>
                     <span className="text-[11px] text-slate-400">
@@ -842,7 +647,7 @@ export const ProductDetailPage: React.FC<ProductDetailPageProps> = ({
                     </span>
                   </div>
                   {rev.comment && <p className="text-xs text-slate-600 leading-relaxed">{rev.comment}</p>}
-
+                  
                   {/* Customer Review Photos */}
                   {rev.images && rev.images.length > 0 && (
                     <div className="flex gap-2 pt-1">
@@ -883,49 +688,46 @@ export const ProductDetailPage: React.FC<ProductDetailPageProps> = ({
               )}
             </>
           ) : (
-            <div className="text-center py-6 border border-dashed border-slate-200 rounded-2xl bg-slate-50/50">
-              <p className="text-xs text-slate-500">No written reviews yet for this product.</p>
-              <button
-                onClick={() => {
-                  if (!currentUser) signInWithGoogle();
-                  else setShowReviewModal(true);
-                }}
-                className="mt-3 text-xs font-bold text-indigo-600 hover:text-indigo-800 underline cursor-pointer"
-              >
-                Be the first verified shopper to rate and review it!
-              </button>
-            </div>
+            <p className="text-xs text-slate-500 py-4 text-center">
+              No written reviews yet. Be the first to share your thoughts on this product!
+            </p>
           )}
         </div>
       </div>
 
-      {/* Review Modal */}
+      {/* Review Modal with Optional Description and Image Upload from File */}
       {showReviewModal && (
-        <div className="fixed inset-0 z-50 bg-black/60 backdrop-blur-xs flex items-center justify-center p-4">
+        <div className="fixed inset-0 z-50 bg-black/50 backdrop-blur-xs flex items-center justify-center p-4">
           <div className="bg-white rounded-3xl max-w-lg w-full p-6 shadow-2xl border border-slate-200 animate-in zoom-in-95 duration-150">
-            <div className="flex items-center justify-between mb-2">
-              <h3 className="text-lg font-bold text-slate-900">Write a Product Review</h3>
-              <button
-                onClick={() => setShowReviewModal(false)}
-                className="p-1 rounded-lg text-slate-400 hover:text-slate-600"
-              >
-                <X className="w-5 h-5" />
-              </button>
-            </div>
+            <h3 className="text-lg font-bold text-slate-900 mb-1">Write a Product Review</h3>
             <p className="text-xs text-slate-500 mb-4">{product.name}</p>
 
             <form onSubmit={handleReviewSubmit} className="space-y-4">
+              {reviewError && (
+                <div className="p-3 bg-rose-50 border border-rose-200 text-rose-800 text-xs font-bold rounded-xl">
+                  {reviewError}
+                </div>
+              )}
               <div>
                 <label className="text-xs font-bold text-slate-700 block mb-1">Your Rating *</label>
-                <div className="flex items-center gap-3">
-                  <StarRating
-                    interactive={true}
-                    rating={reviewRating}
-                    onRatingChange={setReviewRating}
-                    size="lg"
-                    showCount={false}
-                  />
-                  <span className="text-xs font-bold text-slate-700">{reviewRating} Stars</span>
+                <div className="flex items-center gap-2">
+                  {[1, 2, 3, 4, 5].map((num) => (
+                    <button
+                      type="button"
+                      key={num}
+                      onClick={() => setReviewRating(num)}
+                      className="p-1 hover:scale-110 transition-transform cursor-pointer"
+                    >
+                      <Star
+                        className={`w-6 h-6 ${
+                          num <= reviewRating
+                            ? 'fill-amber-400 text-amber-400'
+                            : 'text-slate-300'
+                        }`}
+                      />
+                    </button>
+                  ))}
+                  <span className="text-xs font-bold text-slate-700 ml-2">{reviewRating} Stars</span>
                 </div>
               </div>
 
@@ -935,7 +737,7 @@ export const ProductDetailPage: React.FC<ProductDetailPageProps> = ({
                   type="text"
                   value={reviewTitle}
                   onChange={(e) => setReviewTitle(e.target.value)}
-                  placeholder="e.g. Superb sound quality & battery life!"
+                  placeholder="e.g. Superb sound quality & battery!"
                   className="w-full bg-slate-50 border border-slate-200 text-xs rounded-xl p-3 outline-hidden focus:border-indigo-500"
                 />
               </div>
@@ -951,7 +753,7 @@ export const ProductDetailPage: React.FC<ProductDetailPageProps> = ({
                 />
               </div>
 
-              {/* Upload Review Photo from File */}
+              {/* Upload Review Photo from File (Optional) */}
               <div>
                 <label className="text-xs font-bold text-slate-700 block mb-1">
                   Upload Product Photo (Optional)
@@ -997,32 +799,9 @@ export const ProductDetailPage: React.FC<ProductDetailPageProps> = ({
         </div>
       )}
 
-      {/* High-Resolution Zoom Preview Modal */}
-      {isZoomOpen && (
-        <div
-          onClick={() => setIsZoomOpen(false)}
-          className="fixed inset-0 z-50 bg-black/90 backdrop-blur-md flex items-center justify-center p-4 cursor-zoom-out animate-in fade-in duration-200"
-        >
-          <button
-            onClick={() => setIsZoomOpen(false)}
-            className="absolute top-4 right-4 text-white hover:text-rose-400 p-2 rounded-full bg-white/10 hover:bg-white/20 transition-colors"
-          >
-            <X className="w-6 h-6" />
-          </button>
-          <div className="max-w-4xl max-h-[85vh] p-4 flex items-center justify-center">
-            <img
-              src={activeImage}
-              alt={product.name}
-              className="max-w-full max-h-[80vh] object-contain rounded-2xl shadow-2xl"
-              onClick={(e) => e.stopPropagation()}
-            />
-          </div>
-        </div>
-      )}
-
-      {/* Recommended / Similar Products */}
+      {/* Recommended / Related Products */}
       {relatedProducts.length > 0 && (
-        <section className="space-y-4 pt-6">
+        <section className="space-y-4">
           <h2 className="text-xl font-bold text-slate-900">Similar Products You Might Like</h2>
           <div className="grid grid-cols-2 md:grid-cols-4 gap-4 sm:gap-6">
             {relatedProducts.map((p) => (

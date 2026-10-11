@@ -10,7 +10,8 @@ import {
   CheckCircle,
   LogOut,
   Upload,
-  Camera
+  Camera,
+  AlertCircle
 } from 'lucide-react';
 import { useAuth } from '../context/AuthContext';
 import { Address } from '../types';
@@ -27,6 +28,7 @@ export const ProfilePage: React.FC<ProfilePageProps> = ({ onNavigate }) => {
   const [photoURL, setPhotoURL] = useState(userProfile?.photoURL || currentUser?.photoURL || '');
   const [saving, setSaving] = useState(false);
   const [successMsg, setSuccessMsg] = useState('');
+  const [errorMsg, setErrorMsg] = useState('');
 
   const [addresses, setAddresses] = useState<Address[]>([
     {
@@ -96,8 +98,9 @@ export const ProfilePage: React.FC<ProfilePageProps> = ({ onNavigate }) => {
       await updateProfile({ displayName, phone, photoURL });
       setSuccessMsg('Profile and photo updated successfully!');
       setTimeout(() => setSuccessMsg(''), 3000);
+      setErrorMsg('');
     } catch (err: any) {
-      alert(err.message || 'Error updating profile');
+      setErrorMsg(err.message || 'Error updating profile');
     } finally {
       setSaving(false);
     }
@@ -106,7 +109,7 @@ export const ProfilePage: React.FC<ProfilePageProps> = ({ onNavigate }) => {
   const handleAddAddress = (e: React.FormEvent) => {
     e.preventDefault();
     if (!newAddr.name || !newAddr.phone || !newAddr.pincode || !newAddr.addressLine) {
-      alert('Please fill required fields.');
+      setErrorMsg('Please fill all required address fields.');
       return;
     }
     const addr: Address = {
@@ -244,6 +247,12 @@ export const ProfilePage: React.FC<ProfilePageProps> = ({ onNavigate }) => {
             {successMsg && (
               <p className="text-xs text-emerald-600 font-bold flex items-center gap-1">
                 <CheckCircle className="w-4 h-4" /> {successMsg}
+              </p>
+            )}
+
+            {errorMsg && (
+              <p className="text-xs text-rose-600 font-bold flex items-center gap-1">
+                <AlertCircle className="w-4 h-4" /> {errorMsg}
               </p>
             )}
 
