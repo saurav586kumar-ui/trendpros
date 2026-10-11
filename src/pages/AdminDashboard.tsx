@@ -43,6 +43,7 @@ import { useStore } from '../context/StoreContext';
 import { Product, OrderStatus, Banner, Voucher, StoreAnnouncementConfig, Category, Order } from '../types';
 import { uploadImageFile } from '../utils/storage';
 import { StarRating } from '../components/common/StarRating';
+import { ProductImageUploader } from '../components/common/ProductImageUploader';
 
 interface AdminDashboardProps {
   onNavigate: (route: string, params?: Record<string, any>) => void;
@@ -453,17 +454,22 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({ onNavigate }) =>
         stock: Number(newProd.stock) >= 0 ? Number(newProd.stock) : 25,
         rating: editingProductId ? (newProd.rating || 0) : 0,
         ratingCount: editingProductId ? (newProd.ratingCount || 0) : 0,
-        variants: processedVariants.length ? processedVariants : undefined,
-        specs: Object.keys(processedSpecs).length ? processedSpecs : undefined,
+        variants: processedVariants.length ? processedVariants : [],
+        specs: Object.keys(processedSpecs).length ? processedSpecs : {},
         deliveryDays: 8,
         isActive: true,
       };
 
+      // Strip any undefined keys to strictly comply with Firestore requirements
+      const sanitizedPayload = Object.fromEntries(
+        Object.entries(productPayload).filter(([_, v]) => v !== undefined)
+      ) as any;
+
       if (editingProductId) {
-        await updateProduct(editingProductId, productPayload);
+        await updateProduct(editingProductId, sanitizedPayload);
         setDashboardSuccessMsg(`Product "${newProd.name}" updated successfully!`);
       } else {
-        await addProduct(productPayload);
+        await addProduct(sanitizedPayload);
         setDashboardSuccessMsg(`Product "${newProd.name}" published to catalog successfully!`);
       }
 
@@ -1132,7 +1138,13 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({ onNavigate }) =>
                       <button
                         onClick={() => {
                           setEditingProductId(p.id);
-                          setNewProd(p);
+                          const existingImages = p.images && p.images.length > 0
+                            ? p.images
+                            : (p.mainImage ? [p.mainImage] : []);
+                          setNewProd({
+                            ...p,
+                            images: existingImages,
+                          });
                           setProdCategories(p.categories?.length ? p.categories : [p.category]);
                           if (p.variants && p.variants.length > 0) {
                             setVariantRows(
@@ -1811,57 +1823,33 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({ onNavigate }) =>
                 </div>
               </div>
 
-              {/* Main Thumbnail Image Upload from File */}
-              <div>
-                <label className="font-bold text-slate-700 block mb-1">
-                  Product Thumbnail Image (Upload from File) *
-                </label>
-                <input
-                  type="file"
-                  accept="image/*"
-                  onChange={handleProductMainImageFile}
-                  className="w-full text-xs text-slate-500 file:mr-2 file:py-1.5 file:px-3 file:rounded-xl file:border-0 file:text-xs file:font-bold file:bg-indigo-50 file:text-indigo-700 hover:file:bg-indigo-100 cursor-pointer"
+              {/* Advanced Drag & Drop Product Thumbnail and Extra Gallery Images */}
+              <div className="bg-slate-50/70 p-3.5 rounded-2xl border border-slate-200">
+                <ProductImageUploader
+                  mainImage={newProd.mainImage || ''}
+                  onMainImageChange={(url) => {
+                    setNewProd((prev) => ({
+                      ...prev,
+                      mainImage: url,
+                    }));
+                  }}
+                  images={newProd.images || []}
+                  onImagesChange={(urls) => {
+                    setNewProd((prev) => ({
+                      ...prev,
+                      images: urls,
+                    }));
+                  }}
+                  onStatusNotification={(type, msg) => {
+                    if (type === 'error') {
+                      setDashboardErrorMsg(msg);
+                      setTimeout(() => setDashboardErrorMsg(''), 4000);
+                    } else if (type === 'success') {
+                      setDashboardSuccessMsg(msg);
+                      setTimeout(() => setDashboardSuccessMsg(''), 3000);
+                    }
+                  }}
                 />
-                <input
-                  type="text"
-                  placeholder="Or paste image URL"
-                  value={newProd.mainImage}
-                  onChange={(e) => setNewProd({ ...newProd, mainImage: e.target.value })}
-                  className="w-full mt-1.5 bg-slate-50 border border-slate-200 rounded-xl p-2 text-xs"
-                />
-                {newProd.mainImage && (
-                  <img
-                    src={newProd.mainImage}
-                    alt="Thumbnail preview"
-                    className="w-16 h-16 object-contain rounded-xl border border-slate-200 mt-2 p-1"
-                  />
-                )}
-              </div>
-
-              {/* Extra Images from File */}
-              <div>
-                <label className="font-bold text-slate-700 block mb-1">
-                  Extra Gallery Images (Upload from File)
-                </label>
-                <input
-                  type="file"
-                  accept="image/*"
-                  multiple
-                  onChange={handleProductExtraImagesMultiple}
-                  className="w-full text-xs text-slate-500 file:mr-2 file:py-1.5 file:px-3 file:rounded-xl file:border-0 file:text-xs file:font-bold file:bg-indigo-50 file:text-indigo-700 hover:file:bg-indigo-100 cursor-pointer"
-                />
-                {newProd.images && newProd.images.length > 0 && (
-                  <div className="flex gap-2 mt-2">
-                    {newProd.images.map((img, i) => (
-                      <img
-                        key={i}
-                        src={img}
-                        alt="Gallery"
-                        className="w-12 h-12 object-contain rounded-lg border border-slate-200 p-1"
-                      />
-                    ))}
-                  </div>
-                )}
               </div>
 
               <div>

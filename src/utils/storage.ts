@@ -65,11 +65,38 @@ export async function uploadImageFile(
   }
 }
 
-function readFileAsDataURL(file: File): Promise<string> {
+export function readFileAsDataURL(file: File): Promise<string> {
   return new Promise((resolve, reject) => {
     const reader = new FileReader();
     reader.onload = () => resolve(reader.result as string);
     reader.onerror = () => reject(new Error('Failed to read image file data'));
     reader.readAsDataURL(file);
   });
+}
+
+export function dataURLtoFile(dataUrl: string, filename: string): File {
+  const arr = dataUrl.split(',');
+  const mimeMatch = arr[0].match(/:(.*?);/);
+  const mime = mimeMatch ? mimeMatch[1] : 'image/jpeg';
+  const bstr = atob(arr[1]);
+  let n = bstr.length;
+  const u8arr = new Uint8Array(n);
+  while (n--) {
+    u8arr[n] = bstr.charCodeAt(n);
+  }
+  return new File([u8arr], filename, { type: mime });
+}
+
+export async function importImageFromUrl(url: string): Promise<{ dataUrl: string; file: File }> {
+  const res = await fetch('/api/image/import-url', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ url }),
+  });
+  const data = await res.json();
+  if (!res.ok) {
+    throw new Error(data.error || 'Failed to import image from URL');
+  }
+  const file = dataURLtoFile(data.dataUrl, data.filename || `imported_${Date.now()}.jpg`);
+  return { dataUrl: data.dataUrl, file };
 }
