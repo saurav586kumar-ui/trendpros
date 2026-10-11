@@ -17,11 +17,13 @@ import {
 import { useCart } from '../context/CartContext';
 import { useStore } from '../context/StoreContext';
 import { useAuth } from '../context/AuthContext';
-import { Address, OrderItem } from '../types';
+import { Address, OrderItem, CartItem } from '../types';
 
 interface CheckoutPageProps {
   onNavigate: (route: string, params?: Record<string, any>) => void;
   checkoutParams?: {
+    mode?: 'buy_now' | 'cart';
+    buyNowItem?: CartItem;
     voucherCode?: string;
     voucherDiscount?: number;
     useWallet?: boolean;
@@ -33,11 +35,34 @@ export const CheckoutPage: React.FC<CheckoutPageProps> = ({
   onNavigate,
   checkoutParams,
 }) => {
-  const { cart, subtotal, deliveryCharge, clearCart } = useCart();
+  const { cart, subtotal: cartSubtotal, deliveryCharge: cartDeliveryCharge, clearCart } = useCart();
   const { createOrder } = useStore();
   const { currentUser, userProfile, signInWithGoogle } = useAuth();
 
-  const containsGiftVoucher = cart.some(
+  // Buy Now vs Cart resolution
+  const isBuyNow = checkoutParams?.mode === 'buy_now' || Boolean(checkoutParams?.buyNowItem);
+  const buyNowItem = checkoutParams?.buyNowItem || (() => {
+    try {
+      const saved = sessionStorage.getItem('trendpro_buynow_item');
+      return saved ? (JSON.parse(saved) as CartItem) : null;
+    } catch {
+      return null;
+    }
+  })();
+
+  const activeItems: CartItem[] = isBuyNow && buyNowItem
+    ? [buyNowItem]
+    : cart;
+
+  const activeSubtotal = isBuyNow
+    ? activeItems.reduce((acc, i) => acc + i.price * i.quantity, 0)
+    : cartSubtotal;
+
+  const activeDeliveryCharge = isBuyNow
+    ? activeSubtotal >= 1000 || activeItems.length === 0 ? 0 : 99
+    : cartDeliveryCharge;
+
+  const containsGiftVoucher = activeItems.some(
     (i) =>
       i.isGiftVoucher ||
       i.productId.includes('gift') ||
@@ -92,7 +117,7 @@ export const CheckoutPage: React.FC<CheckoutPageProps> = ({
 
   const voucherDiscount = checkoutParams?.voucherDiscount || 0;
   const initialWalletUsed = checkoutParams?.walletUsed || 0;
-  const totalPayable = Math.max(0, subtotal - voucherDiscount + deliveryCharge - initialWalletUsed);
+  const totalPayable = Math.max(0, activeSubtotal - voucherDiscount + activeDeliveryCharge - initialWalletUsed);
 
   // Standard 8 days delivery date calculation
   const estimatedDeliveryDate = new Date(Date.now() + 8 * 24 * 60 * 60 * 1000).toLocaleDateString('en-IN', {
@@ -109,10 +134,21 @@ export const CheckoutPage: React.FC<CheckoutPageProps> = ({
     }
   }, [containsGiftVoucher, paymentMethod]);
 
-  if (cart.length === 0) {
+  const handleBackNavigation = () => {
+    if (window.history.length > 1) {
+      window.history.back();
+    } else if (isBuyNow && buyNowItem) {
+      onNavigate('product-detail', { id: buyNowItem.productId });
+    } else {
+      onNavigate('cart');
+    }
+  };
+
+  if (activeItems.length === 0) {
     return (
       <div className="max-w-4xl mx-auto px-4 py-20 text-center">
-        <h2 className="text-xl font-bold text-slate-800">Your cart is empty</h2>
+        <h2 className="text-xl font-bold text-slate-800">Your checkout is empty</h2>
+        <p className="text-xs text-slate-500 mt-1">Please select an item to purchase.</p>
         <button
           onClick={() => onNavigate('products')}
           className="mt-4 bg-indigo-600 text-white text-xs font-bold px-6 py-2.5 rounded-xl cursor-pointer"
@@ -181,7 +217,7 @@ export const CheckoutPage: React.FC<CheckoutPageProps> = ({
     setPaymentError('');
 
     try {
-      const orderItems: OrderItem[] = cart.map((i) => ({
+      const orderItems: OrderItem[] = activeItems.map((i) => ({
         productId: i.productId,
         name: i.name,
         brand: i.brand,
@@ -201,9 +237,9 @@ export const CheckoutPage: React.FC<CheckoutPageProps> = ({
         items: orderItems,
         shippingAddress: selectedAddr,
         pricing: {
-          subtotal,
+          subtotal: activeSubtotal,
           discount: 0,
-          deliveryCharge,
+          deliveryCharge: activeDeliveryCharge,
           voucherCode: checkoutParams?.voucherCode,
           voucherDiscount,
           walletUsed: finalWalletUsed,
@@ -218,7 +254,14 @@ export const CheckoutPage: React.FC<CheckoutPageProps> = ({
         estimatedDelivery: estimatedDeliveryDate,
       });
 
-      clearCart();
+      if (isBuyNow) {
+        try {
+          sessionStorage.removeItem('trendpro_buynow_item');
+        } catch {}
+      } else {
+        clearCart();
+      }
+
       setIsProcessing(false);
       onNavigate('order-confirmation', { orderId });
     } catch (err: any) {
@@ -233,13 +276,16 @@ export const CheckoutPage: React.FC<CheckoutPageProps> = ({
       {/* Title */}
       <div className="flex items-center gap-3 pb-4 border-b border-slate-200">
         <button
-          onClick={() => onNavigate('cart')}
-          className="p-2 text-slate-500 hover:text-slate-900 rounded-xl"
+          onClick={handleBackNavigation}
+          className="p-2 text-slate-500 hover:text-slate-900 rounded-xl cursor-pointer hover:bg-slate-100 transition-colors"
+          title="Back"
         >
           <ArrowLeft className="w-5 h-5" />
         </button>
         <div>
-          <h1 className="text-2xl font-black text-slate-900 tracking-tight">Checkout</h1>
+          <h1 className="text-2xl font-black text-slate-900 tracking-tight">
+            {isBuyNow ? 'Buy Now Checkout' : 'Cart Checkout'}
+          </h1>
           <p className="text-xs text-slate-500">Secure 256-Bit SSL Encrypted Order Processing</p>
         </div>
       </div>
@@ -545,11 +591,11 @@ export const CheckoutPage: React.FC<CheckoutPageProps> = ({
         <div className="lg:col-span-5 space-y-6">
           <div className="bg-white rounded-2xl border border-slate-200 p-5 shadow-xs space-y-4">
             <h3 className="text-xs font-bold text-slate-900 uppercase tracking-wider pb-2 border-b border-slate-100">
-              Items in Order ({cart.length})
+              Items in Order ({activeItems.length})
             </h3>
 
             <div className="space-y-3 max-h-60 overflow-y-auto pr-1">
-              {cart.map((i) => (
+              {activeItems.map((i) => (
                 <div key={i.productId} className="flex items-center gap-3 text-xs">
                   <img
                     src={i.image}
@@ -576,7 +622,7 @@ export const CheckoutPage: React.FC<CheckoutPageProps> = ({
 
               <div className="flex justify-between text-slate-600">
                 <span>Subtotal</span>
-                <span>₹{subtotal.toLocaleString()}</span>
+                <span>₹{activeSubtotal.toLocaleString()}</span>
               </div>
 
               {voucherDiscount > 0 && (
@@ -601,7 +647,7 @@ export const CheckoutPage: React.FC<CheckoutPageProps> = ({
               <div className="flex justify-between text-slate-600">
                 <span>Delivery</span>
                 <span>
-                  {deliveryCharge === 0 ? <strong className="text-emerald-600">FREE</strong> : `₹${deliveryCharge}`}
+                  {activeDeliveryCharge === 0 ? <strong className="text-emerald-600">FREE</strong> : `₹${activeDeliveryCharge}`}
                 </span>
               </div>
 

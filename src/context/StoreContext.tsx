@@ -67,6 +67,7 @@ interface StoreContextType {
   chats: ChatConversation[];
   announcementConfig: StoreAnnouncementConfig;
   storeConfig: StoreConfig;
+  trendingProductIds: string[];
   loading: boolean;
   seedInitialDataToFirestore: () => Promise<void>;
   createOrder: (orderData: Omit<Order, 'id' | 'createdAt' | 'updatedAt' | 'timeline' | 'customerId'>) => Promise<string>;
@@ -84,7 +85,12 @@ interface StoreContextType {
   addBanner: (banner: Omit<Banner, 'id'>) => Promise<string>;
   updateBanner: (id: string, updates: Partial<Banner>) => Promise<void>;
   deleteBanner: (id: string) => Promise<void>;
+  updateTrendingProducts: (productIds: string[]) => Promise<void>;
+  subscribeToRestock: (productId: string, productName: string, variantId?: string) => Promise<void>;
+  unsubscribeFromRestock: (productId: string) => Promise<void>;
+  isSubscribedToRestock: (productId: string) => Promise<boolean>;
   addReview: (productId: string, rating: number, title?: string, comment?: string, images?: string[]) => Promise<void>;
+  deleteReview: (reviewId: string, productId: string) => Promise<void>;
   getProductReviews: (productId: string) => Promise<Review[]>;
   sendSupportMessage: (message: string, orderId?: string, imageUrl?: string, imageFileName?: string) => Promise<string>;
   replySupportMessage: (userId: string, reply: string, orderId?: string, imageUrl?: string, imageFileName?: string) => Promise<string>;
@@ -111,6 +117,7 @@ export const StoreProvider: React.FC<{ children: React.ReactNode }> = ({ childre
   const [chats, setChats] = useState<ChatConversation[]>([]);
   const [announcementConfig, setAnnouncementConfig] = useState<StoreAnnouncementConfig>(DEFAULT_ANNOUNCEMENT);
   const [storeConfig, setStoreConfig] = useState<StoreConfig>(DEFAULT_STORE_CONFIG);
+  const [trendingProductIds, setTrendingProductIds] = useState<string[]>([]);
   const [loading, setLoading] = useState(true);
 
   // Sync store company config & announcement config
@@ -214,12 +221,28 @@ export const StoreProvider: React.FC<{ children: React.ReactNode }> = ({ childre
       () => setAnnouncementConfig(DEFAULT_ANNOUNCEMENT)
     );
 
+    // Trending products settings listener
+    const unsubTrending = onSnapshot(
+      doc(db, 'storeSettings', 'trending'),
+      (snap) => {
+        if (snap.exists() && Array.isArray(snap.data()?.productIds)) {
+          setTrendingProductIds(snap.data().productIds);
+        } else {
+          setTrendingProductIds(SAMPLE_PRODUCTS.filter((p) => p.isTrending).map((p) => p.id));
+        }
+      },
+      () => {
+        setTrendingProductIds(SAMPLE_PRODUCTS.filter((p) => p.isTrending).map((p) => p.id));
+      }
+    );
+
     return () => {
       unsubProducts();
       unsubCategories();
       unsubBanners();
       unsubVouchers();
       unsubAnnouncement();
+      unsubTrending();
     };
   }, []);
 
@@ -968,9 +991,19 @@ export const StoreProvider: React.FC<{ children: React.ReactNode }> = ({ childre
   // Product CRUD
   const addProduct = async (productData: Omit<Product, 'id' | 'createdAt'>): Promise<string> => {
     const id = `tp-prod-${Date.now()}`;
+    // Ensure consistent categoryIds array along with primary category
+    const catList = productData.categoryIds && productData.categoryIds.length > 0
+      ? productData.categoryIds
+      : productData.categories && productData.categories.length > 0
+      ? productData.categories
+      : [productData.category || 'electronics'];
+
     const newProduct: Product = {
       ...productData,
       id,
+      category: productData.category || catList[0],
+      categories: catList,
+      categoryIds: catList,
       createdAt: new Date().toISOString(),
     };
     await setDoc(doc(db, 'products', id), sanitizeForFirestore(newProduct));
@@ -978,15 +1011,150 @@ export const StoreProvider: React.FC<{ children: React.ReactNode }> = ({ childre
   };
 
   const updateProduct = async (id: string, updates: Partial<Product>) => {
+    const existing = products.find((p) => p.id === id);
+    const wasOutOfStock = existing ? existing.stock <= 0 : false;
+    const isNowInStock = updates.stock !== undefined && updates.stock > 0;
+
+    // Maintain categoryIds consistency
+    let categoryUpdates = {};
+    if (updates.categoryIds || updates.categories || updates.category) {
+      const catList = updates.categoryIds && updates.categoryIds.length > 0
+        ? updates.categoryIds
+        : updates.categories && updates.categories.length > 0
+        ? updates.categories
+        : updates.category
+        ? [updates.category]
+        : existing?.categoryIds || [existing?.category || 'electronics'];
+      categoryUpdates = {
+        category: updates.category || catList[0],
+        categories: catList,
+        categoryIds: catList,
+      };
+    }
+
     const sanitized = sanitizeForFirestore({
       ...updates,
+      ...categoryUpdates,
       updatedAt: new Date().toISOString(),
     });
     await updateDoc(doc(db, 'products', id), sanitized);
+
+    // Restock notification trigger: if stock updated from 0 to > 0
+    if (wasOutOfStock && isNowInStock) {
+      try {
+        const qSubs = query(
+          collection(db, 'restockSubscriptions'),
+          where('productId', '==', id),
+          where('resolved', '==', false)
+        );
+        const subSnap = await getDocs(qSubs);
+        const now = new Date().toISOString();
+        const prodName = updates.name || existing?.name || 'Product';
+        const prodSlug = updates.slug || existing?.slug || id;
+
+        for (const subDoc of subSnap.docs) {
+          const sub = subDoc.data() as any;
+          // Create in-app notification
+          await addDoc(
+            collection(db, 'notifications'),
+            sanitizeForFirestore({
+              userId: sub.customerUid,
+              title: 'Item Back in Stock! 🎉',
+              message: `Great news! "${prodName}" is back in stock with ${updates.stock} units available. Order now before stock runs out!`,
+              type: 'order',
+              link: `/product/${prodSlug}`,
+              isRead: false,
+              createdAt: now,
+            })
+          );
+
+          // Mark subscription resolved
+          await updateDoc(doc(db, 'restockSubscriptions', subDoc.id), {
+            resolved: true,
+            notifiedAt: now,
+          });
+
+          // Browser notification if user is on this machine and permitted
+          if (
+            currentUser &&
+            currentUser.uid === sub.customerUid &&
+            typeof window !== 'undefined' &&
+            'Notification' in window &&
+            Notification.permission === 'granted'
+          ) {
+            try {
+              new Notification('TrendPro — Back in Stock!', {
+                body: `"${prodName}" is now available to order!`,
+                icon: updates.mainImage || existing?.mainImage || '/favicon.ico',
+              });
+            } catch {}
+          }
+        }
+      } catch (restockErr) {
+        console.warn('Restock notification processing notice:', restockErr);
+      }
+    }
   };
 
   const deleteProduct = async (id: string) => {
     await deleteDoc(doc(db, 'products', id));
+    // If it was in trending list, remove it
+    if (trendingProductIds.includes(id)) {
+      const remainingTrending = trendingProductIds.filter((tid) => tid !== id);
+      await updateTrendingProducts(remainingTrending);
+    }
+  };
+
+  // Trending Products Management
+  const updateTrendingProducts = async (productIds: string[]) => {
+    const now = new Date().toISOString();
+    await setDoc(doc(db, 'storeSettings', 'trending'), {
+      productIds,
+      updatedAt: now,
+    });
+    setTrendingProductIds(productIds);
+
+    // Keep product isTrending flag synchronized
+    for (const prod of products) {
+      const isTrendingNow = productIds.includes(prod.id);
+      if (Boolean(prod.isTrending) !== isTrendingNow) {
+        await updateDoc(doc(db, 'products', prod.id), { isTrending: isTrendingNow });
+      }
+    }
+  };
+
+  // Restock Subscriptions
+  const subscribeToRestock = async (productId: string, productName: string, variantId?: string) => {
+    if (!currentUser) throw new Error('Please sign in with Google to subscribe for restock notifications');
+    const subId = `sub_${currentUser.uid}_${productId}`;
+    const newSub = {
+      id: subId,
+      customerUid: currentUser.uid,
+      customerEmail: currentUser.email || '',
+      productId,
+      productName,
+      variantId: variantId || null,
+      createdAt: new Date().toISOString(),
+      resolved: false,
+    };
+    await setDoc(doc(db, 'restockSubscriptions', subId), sanitizeForFirestore(newSub));
+  };
+
+  const unsubscribeFromRestock = async (productId: string) => {
+    if (!currentUser) return;
+    const subId = `sub_${currentUser.uid}_${productId}`;
+    await deleteDoc(doc(db, 'restockSubscriptions', subId));
+  };
+
+  const isSubscribedToRestock = async (productId: string): Promise<boolean> => {
+    if (!currentUser) return false;
+    try {
+      const subId = `sub_${currentUser.uid}_${productId}`;
+      const snap = await getDoc(doc(db, 'restockSubscriptions', subId));
+      return snap.exists() && !snap.data().resolved;
+    } catch {
+      return false;
+    }
   };
 
   // Category CRUD
@@ -1023,7 +1191,7 @@ export const StoreProvider: React.FC<{ children: React.ReactNode }> = ({ childre
     await deleteDoc(doc(db, 'banners', id));
   };
 
-  // Reviews
+  // Real Reviews with Accurate Rating Calculation
   const addReview = async (
     productId: string,
     rating: number,
@@ -1032,28 +1200,65 @@ export const StoreProvider: React.FC<{ children: React.ReactNode }> = ({ childre
     images?: string[]
   ) => {
     if (!currentUser) throw new Error('Must be logged in to submit a review');
-    const reviewId = `rev-${Date.now()}`;
+    const cleanRating = Math.max(1, Math.min(5, Number(rating) || 5));
+
+    // Check if user already reviewed this product to avoid duplicate entries
+    const qUserRev = query(
+      collection(db, 'reviews'),
+      where('productId', '==', productId),
+      where('userId', '==', currentUser.uid)
+    );
+    const existingRevSnap = await getDocs(qUserRev);
+    const now = new Date().toISOString();
+
+    const reviewId = existingRevSnap.empty ? `rev-${Date.now()}` : existingRevSnap.docs[0].id;
     const rawReview: Review = {
       id: reviewId,
       productId,
       userId: currentUser.uid,
       userName: currentUser.displayName || 'Verified Buyer',
       userPhoto: currentUser.photoURL || undefined,
-      rating,
+      rating: cleanRating,
       title: title || 'Customer Review',
       comment: comment || '',
       images: images || [],
       isVerifiedPurchase: true,
-      createdAt: new Date().toISOString(),
+      createdAt: now,
     };
     await setDoc(doc(db, 'reviews', reviewId), sanitizeForFirestore(rawReview));
 
-    const prod = products.find((p) => p.id === productId);
-    if (prod) {
-      const newCount = (prod.ratingCount || 0) + 1;
-      const newRating = Number((((prod.rating || 5) * (prod.ratingCount || 0) + rating) / newCount).toFixed(1));
-      await updateProduct(productId, { rating: newRating, ratingCount: newCount });
-    }
+    // Calculate real average and review count from all valid reviews
+    const allProdRevsSnap = await getDocs(
+      query(collection(db, 'reviews'), where('productId', '==', productId))
+    );
+    const validReviews = allProdRevsSnap.docs
+      .map((d) => d.data() as Review)
+      .filter((r) => typeof r.rating === 'number' && r.rating >= 1 && r.rating <= 5);
+
+    const newCount = validReviews.length;
+    const newRating = newCount > 0
+      ? Number((validReviews.reduce((sum, r) => sum + r.rating, 0) / newCount).toFixed(1))
+      : 0;
+
+    await updateProduct(productId, { rating: newRating, ratingCount: newCount });
+  };
+
+  const deleteReview = async (reviewId: string, productId: string) => {
+    await deleteDoc(doc(db, 'reviews', reviewId));
+
+    const allProdRevsSnap = await getDocs(
+      query(collection(db, 'reviews'), where('productId', '==', productId))
+    );
+    const validReviews = allProdRevsSnap.docs
+      .map((d) => d.data() as Review)
+      .filter((r) => r.id !== reviewId && typeof r.rating === 'number' && r.rating >= 1 && r.rating <= 5);
+
+    const newCount = validReviews.length;
+    const newRating = newCount > 0
+      ? Number((validReviews.reduce((sum, r) => sum + r.rating, 0) / newCount).toFixed(1))
+      : 0;
+
+    await updateProduct(productId, { rating: newRating, ratingCount: newCount });
   };
 
   const getProductReviews = async (productId: string): Promise<Review[]> => {
@@ -1061,21 +1266,12 @@ export const StoreProvider: React.FC<{ children: React.ReactNode }> = ({ childre
       const q = query(collection(db, 'reviews'), where('productId', '==', productId));
       const snap = await getDocs(q);
       if (snap.empty) {
-        return [
-          {
-            id: `rev-default-1`,
-            productId,
-            userId: 'usr-1',
-            userName: 'Vikram Malhotra',
-            rating: 5,
-            title: 'Outstanding quality and super fast shipping!',
-            comment: 'Arrived in pristine condition within 48 hours. Fits and performs exactly as described.',
-            isVerifiedPurchase: true,
-            createdAt: '2026-03-05T14:30:00Z',
-          },
-        ];
+        return [];
       }
-      return snap.docs.map((d) => ({ id: d.id, ...d.data() } as Review));
+      return snap.docs
+        .map((d) => ({ id: d.id, ...d.data() } as Review))
+        .filter((r) => typeof r.rating === 'number' && r.rating >= 1 && r.rating <= 5)
+        .sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime());
     } catch {
       return [];
     }
@@ -1427,6 +1623,7 @@ export const StoreProvider: React.FC<{ children: React.ReactNode }> = ({ childre
         chats,
         announcementConfig,
         storeConfig,
+        trendingProductIds,
         loading,
         seedInitialDataToFirestore,
         createOrder,
@@ -1444,7 +1641,12 @@ export const StoreProvider: React.FC<{ children: React.ReactNode }> = ({ childre
         addBanner,
         updateBanner,
         deleteBanner,
+        updateTrendingProducts,
+        subscribeToRestock,
+        unsubscribeFromRestock,
+        isSubscribedToRestock,
         addReview,
+        deleteReview,
         getProductReviews,
         sendSupportMessage,
         replySupportMessage,

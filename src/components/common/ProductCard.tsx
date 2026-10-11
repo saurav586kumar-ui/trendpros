@@ -1,7 +1,9 @@
-import React from 'react';
-import { Star, Heart, ShoppingBag, Scale, Check } from 'lucide-react';
+import React, { useState } from 'react';
+import { Heart, ShoppingBag, Scale, Check, Share2, Bell } from 'lucide-react';
 import { Product } from '../../types';
 import { useCart } from '../../context/CartContext';
+import { StarRating } from './StarRating';
+import { shareProduct } from '../../utils/sharing';
 
 interface ProductCardProps {
   product: Product;
@@ -18,13 +20,16 @@ export const ProductCard: React.FC<ProductCardProps> = ({ product, onNavigate })
     isInCompare,
   } = useCart();
 
+  const [shareFeedback, setShareFeedback] = useState<string | null>(null);
+  const [imgError, setImgError] = useState(false);
+
   const isFavorited = isInWishlist(product.id);
   const isCompared = isInCompare(product.id);
   const cartItem = cart.find((i) => i.productId === product.id);
   const isOutOfStock = product.stock <= 0;
 
   const handleCardClick = () => {
-    onNavigate('product-detail', { id: product.id });
+    onNavigate('product-detail', { id: product.slug || product.id });
   };
 
   const handleAddToCart = (e: React.MouseEvent) => {
@@ -44,6 +49,17 @@ export const ProductCard: React.FC<ProductCardProps> = ({ product, onNavigate })
     toggleCompare(product.id);
   };
 
+  const handleShareClick = async (e: React.MouseEvent) => {
+    e.stopPropagation();
+    const res = await shareProduct(product);
+    if (res.message) {
+      setShareFeedback(res.message);
+      setTimeout(() => setShareFeedback(null), 2500);
+    }
+  };
+
+  const fallbackImage = 'https://images.unsplash.com/photo-1523275335684-37898b6baf30?w=600&q=80';
+
   return (
     <div
       onClick={handleCardClick}
@@ -52,21 +68,31 @@ export const ProductCard: React.FC<ProductCardProps> = ({ product, onNavigate })
       {/* Product Image Container */}
       <div className="relative aspect-square w-full bg-slate-50 overflow-hidden flex items-center justify-center p-4">
         <img
-          src={product.mainImage}
+          src={!imgError && product.mainImage ? product.mainImage : fallbackImage}
           alt={product.name}
+          onError={() => setImgError(true)}
           className="w-full h-full object-contain mix-blend-multiply group-hover:scale-108 transition-transform duration-500 ease-out"
           loading="lazy"
         />
 
         {/* Discount Badge */}
         {product.discountPercent > 0 && (
-          <span className="absolute top-3 left-3 bg-gradient-to-r from-emerald-600 to-teal-600 text-white text-[11px] font-bold px-2 py-0.5 rounded-full shadow-xs tracking-wider">
+          <span className="absolute top-3 left-3 bg-gradient-to-r from-emerald-600 to-teal-600 text-white text-[11px] font-bold px-2 py-0.5 rounded-full shadow-xs tracking-wider z-10">
             {product.discountPercent}% OFF
           </span>
         )}
 
-        {/* Wishlist & Compare Action Buttons */}
-        <div className="absolute top-3 right-3 flex flex-col gap-1.5 opacity-90 sm:opacity-0 group-hover:opacity-100 transition-opacity duration-200">
+        {/* Out of Stock Ribbon */}
+        {isOutOfStock && (
+          <div className="absolute inset-0 bg-slate-900/40 backdrop-blur-[1px] flex items-center justify-center z-10">
+            <span className="bg-rose-600 text-white text-xs font-black uppercase px-3 py-1 rounded-full shadow-lg tracking-wider flex items-center gap-1">
+              <Bell className="w-3 h-3" /> Out of Stock
+            </span>
+          </div>
+        )}
+
+        {/* Wishlist, Compare & Share Action Buttons */}
+        <div className="absolute top-3 right-3 flex flex-col gap-1.5 opacity-90 sm:opacity-0 group-hover:opacity-100 transition-opacity duration-200 z-20">
           <button
             onClick={handleWishlistClick}
             className={`w-8 h-8 rounded-full flex items-center justify-center shadow-md transition-colors ${
@@ -90,10 +116,25 @@ export const ProductCard: React.FC<ProductCardProps> = ({ product, onNavigate })
           >
             <Scale className="w-4 h-4" />
           </button>
+
+          <button
+            onClick={handleShareClick}
+            className="w-8 h-8 rounded-full flex items-center justify-center shadow-md transition-colors bg-white/90 text-slate-600 hover:text-indigo-600 hover:bg-white"
+            title="Share Product"
+          >
+            <Share2 className="w-3.5 h-3.5" />
+          </button>
         </div>
 
+        {/* Share feedback toast */}
+        {shareFeedback && (
+          <div className="absolute top-12 right-2 bg-slate-900 text-white text-[10px] font-bold px-2 py-1 rounded shadow-lg z-30 animate-in fade-in duration-150">
+            {shareFeedback}
+          </div>
+        )}
+
         {/* Stock Warning Badge */}
-        {product.stock > 0 && product.stock <= 5 && (
+        {!isOutOfStock && product.stock > 0 && product.stock <= 5 && (
           <span className="absolute bottom-2 left-2 bg-amber-500/90 text-white text-[10px] font-semibold px-2 py-0.5 rounded-md backdrop-blur-xs">
             Only {product.stock} left!
           </span>
@@ -106,7 +147,7 @@ export const ProductCard: React.FC<ProductCardProps> = ({ product, onNavigate })
           {/* Brand & Category */}
           <div className="flex items-center justify-between text-[11px] text-slate-400 font-medium mb-1 uppercase tracking-wider">
             <span>{product.brand}</span>
-            <span className="capitalize">{product.category}</span>
+            <span className="capitalize truncate max-w-[120px]">{product.category}</span>
           </div>
 
           {/* Product Title */}
@@ -114,15 +155,14 @@ export const ProductCard: React.FC<ProductCardProps> = ({ product, onNavigate })
             {product.name}
           </h3>
 
-          {/* Ratings */}
-          <div className="flex items-center gap-1.5 mb-2.5">
-            <div className="flex items-center gap-1 bg-emerald-600 text-white text-[11px] font-bold px-1.5 py-0.5 rounded">
-              <span>{product.rating}</span>
-              <Star className="w-3 h-3 fill-white" />
-            </div>
-            <span className="text-[11px] text-slate-400">
-              ({product.ratingCount?.toLocaleString() ?? 48})
-            </span>
+          {/* Real Ratings with Proportional Stars */}
+          <div className="mb-2.5">
+            <StarRating
+              rating={product.rating || 0}
+              reviewCount={product.ratingCount}
+              showBadge={true}
+              size="xs"
+            />
           </div>
         </div>
 
@@ -143,11 +183,10 @@ export const ProductCard: React.FC<ProductCardProps> = ({ product, onNavigate })
           </div>
 
           <button
-            onClick={handleAddToCart}
-            disabled={isOutOfStock}
-            className={`p-2 sm:px-3 sm:py-2 rounded-xl text-xs font-semibold flex items-center gap-1.5 transition-all shadow-xs active:scale-95 ${
+            onClick={isOutOfStock ? handleCardClick : handleAddToCart}
+            className={`p-2 sm:px-3 sm:py-2 rounded-xl text-xs font-semibold flex items-center gap-1.5 transition-all shadow-xs active:scale-95 cursor-pointer ${
               isOutOfStock
-                ? 'bg-slate-100 text-slate-400 cursor-not-allowed'
+                ? 'bg-rose-50 text-rose-700 border border-rose-200 hover:bg-rose-100'
                 : cartItem
                 ? 'bg-emerald-50 text-emerald-700 border border-emerald-300'
                 : 'bg-indigo-600 hover:bg-indigo-700 text-white shadow-indigo-500/20'
@@ -159,7 +198,7 @@ export const ProductCard: React.FC<ProductCardProps> = ({ product, onNavigate })
                 <span className="hidden sm:inline">Added ({cartItem.quantity})</span>
               </>
             ) : isOutOfStock ? (
-              <span>Out of Stock</span>
+              <span>Notify Me</span>
             ) : (
               <>
                 <ShoppingBag className="w-3.5 h-3.5" />

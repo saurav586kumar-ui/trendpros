@@ -18,12 +18,33 @@ interface HomePageProps {
 }
 
 export const HomePage: React.FC<HomePageProps> = ({ onNavigate }) => {
-  const { products, categories, banners, seedInitialDataToFirestore } = useStore();
+  const { products, categories, banners, trendingProductIds, seedInitialDataToFirestore } = useStore();
   const { isAdmin } = useAuth();
 
-  const trendingProducts = products.filter((p) => p.isTrending || p.rating >= 4.8).slice(0, 4);
-  const techDeals = products.filter((p) => p.category === 'electronics').slice(0, 4);
-  const fashionDeals = products.filter((p) => p.category === 'fashion').slice(0, 4);
+  // Owner-controlled trending products: strictly selected products in order, filtering broken/inactive items
+  const trendingProducts = (
+    trendingProductIds.length > 0
+      ? trendingProductIds
+          .map((id) => products.find((p) => p.id === id))
+          .filter((p): p is typeof products[0] => Boolean(p && p.isActive !== false))
+      : products.filter((p) => p.isTrending && p.isActive !== false)
+  ).slice(0, 8);
+
+  const matchesCategory = (p: typeof products[0], target: string) => {
+    if (!p.isActive) return false;
+    const cat = target.toLowerCase();
+    const catIds = (p.categoryIds || []).map((c) => c.toLowerCase());
+    const cats = (p.categories || []).map((c) => c.toLowerCase());
+    return (
+      catIds.includes(cat) ||
+      catIds.includes(`cat-${cat}`) ||
+      cats.includes(cat) ||
+      (p.category && p.category.toLowerCase() === cat)
+    );
+  };
+
+  const techDeals = products.filter((p) => matchesCategory(p, 'electronics')).slice(0, 4);
+  const fashionDeals = products.filter((p) => matchesCategory(p, 'fashion')).slice(0, 4);
 
   return (
     <div className="space-y-12 pb-16">

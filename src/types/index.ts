@@ -6,6 +6,7 @@ export interface Product {
   brand: string;
   category: string;
   categories?: string[]; // Multiple categories support
+  categoryIds?: string[]; // Category ID array support
   subCategory?: string;
   description: string;
   highlights: string[];
@@ -20,6 +21,7 @@ export interface Product {
   isActive: boolean;
   isFeatured?: boolean;
   isTrending?: boolean;
+  trendingOrder?: number;
   isGiftVoucher?: boolean;
   giftCardDenominations?: number[];
   variants?: {
@@ -34,6 +36,23 @@ export interface Product {
   returnPolicyDays?: number;
   createdAt: string;
   updatedAt?: string;
+}
+
+export interface RestockSubscription {
+  id: string;
+  customerUid: string;
+  customerEmail: string;
+  productId: string;
+  productName: string;
+  variantId?: string | null;
+  createdAt: string;
+  resolved: boolean;
+  notifiedAt?: string;
+}
+
+export interface TrendingConfig {
+  productIds: string[];
+  updatedAt: string;
 }
 
 export interface Category {

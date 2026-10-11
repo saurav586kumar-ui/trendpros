@@ -16,9 +16,19 @@ import {
 import { auth, db, handleFirestoreError, OperationType } from '../config/firebase';
 import { UserProfile } from '../types';
 
-// Configured owner/admin email and static UID
-export const OWNER_EMAIL = 'saurav586kumar@gmail.com';
+// Configured owner/admin emails and static UID
+export const ADMIN_EMAILS = [
+  'rd9570235656@gmail.com',
+  'saurav586kumar@gmail.com',
+];
+export const OWNER_EMAIL = 'rd9570235656@gmail.com';
 export const OWNER_UID = 'sz118QZdKAg5VYH4k8CkDubIITo2';
+
+export const isAuthorizedAdmin = (email?: string | null): boolean => {
+  if (!email) return false;
+  const clean = email.toLowerCase().trim();
+  return ADMIN_EMAILS.some((adm) => adm.toLowerCase() === clean);
+};
 
 /**
  * Deterministically derives a unique conversationId from customerUid and static ownerUid.
@@ -47,7 +57,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
   const [loading, setLoading] = useState(true);
 
   const isAdmin =
-    Boolean(currentUser?.email && currentUser.email.toLowerCase() === OWNER_EMAIL.toLowerCase()) ||
+    Boolean(currentUser?.email && isAuthorizedAdmin(currentUser.email)) ||
     userProfile?.role === 'admin';
 
   useEffect(() => {

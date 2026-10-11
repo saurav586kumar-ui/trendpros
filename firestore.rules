@@ -14,8 +14,7 @@ service cloud.firestore {
     function isAdmin() {
       return isSignedIn() && (
         (request.auth.token.email != null && (
-          request.auth.token.email == 'saurav586kumar@gmail.com' ||
-          request.auth.token.email == 'Saurav586kumar@gmail.com' ||
+          request.auth.token.email.lower() == 'rd9570235656@gmail.com' ||
           request.auth.token.email.lower() == 'saurav586kumar@gmail.com'
         )) ||
         exists(/databases/$(database)/documents/admins/$(request.auth.uid))
@@ -32,8 +31,7 @@ service cloud.firestore {
       allow read: if isSignedIn();
       allow write: if isSignedIn() && (
         (request.auth.token.email != null && (
-          request.auth.token.email == 'saurav586kumar@gmail.com' ||
-          request.auth.token.email == 'Saurav586kumar@gmail.com' ||
+          request.auth.token.email.lower() == 'rd9570235656@gmail.com' ||
           request.auth.token.email.lower() == 'saurav586kumar@gmail.com'
         )) ||
         isAdmin()
@@ -94,8 +92,18 @@ service cloud.firestore {
     // Product reviews
     match /reviews/{reviewId} {
       allow read: if true;
-      allow create: if isSignedIn() && request.resource.data.userId == request.auth.uid;
+      allow create: if isSignedIn() &&
+        request.resource.data.userId == request.auth.uid &&
+        request.resource.data.rating >= 1 &&
+        request.resource.data.rating <= 5;
       allow update, delete: if (isSignedIn() && resource.data.userId == request.auth.uid) || isAdmin();
+    }
+
+    // Out-of-Stock Notify Me Restock Subscriptions
+    match /restockSubscriptions/{subId} {
+      allow read: if (isSignedIn() && resource.data.customerUid == request.auth.uid) || isAdmin();
+      allow create: if isSignedIn() && request.resource.data.customerUid == request.auth.uid;
+      allow update, delete: if (isSignedIn() && resource.data.customerUid == request.auth.uid) || isAdmin();
     }
 
     // Customer support messages & conversations
